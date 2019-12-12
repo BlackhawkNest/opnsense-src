@@ -5752,7 +5752,7 @@ pf_route_shared(struct mbuf **m, struct pf_rule *r, int dir, struct ifnet *ifp,
 	if (ifp == NULL)
 		goto bad;
 
-	if (ip_set_fwdtag(m0, &dst, ifp->if_index))
+	if (ip_set_fwdtag(m0, &dst, ifp))
 		goto bad;
 
 done:
@@ -5977,7 +5977,7 @@ pf_route6_shared(struct mbuf **m, struct pf_rule *r, int dir,
 	if (ifp == NULL)
 		goto bad;
 
-	if (ip6_set_fwdtag(m0, &dst, ifp->if_index))
+	if (ip6_set_fwdtag(m0, &dst, ifp))
 		goto bad;
 
 done:
@@ -6147,7 +6147,6 @@ pf_test(int dir, int pflags, struct ifnet *ifp, struct mbuf **m0, struct inpcb *
 	struct pf_pdesc		 pd;
 	int			 off, dirndx, pqid = 0;
 	int			 share_forward = V_pf_share_forward;
-	u_short			 ifidx;
 
 	PF_RULES_RLOCK_TRACKER;
 
@@ -6156,15 +6155,8 @@ pf_test(int dir, int pflags, struct ifnet *ifp, struct mbuf **m0, struct inpcb *
 	if (!V_pf_status.running)
 		return (PF_PASS);
 
-	/* restore the correct forwarding interface */
-	if (share_forward && dir == PF_OUT && IP_HAS_NEXTHOP(m) &&
-	    !ip_get_fwdtag(m, NULL, &ifidx)) {
-		if (ifidx != 0) {
-			struct ifnet *nifp = ifnet_byindex(ifidx);
-			if (nifp != NULL) {
-				ifp = nifp;
-			}
-		}
+	if (share_forward && dir == PF_OUT && IP_HAS_NEXTHOP(m)) {
+		ip_get_fwdtag(m, NULL, &ifp);
 	}
 
 	memset(&pd, 0, sizeof(pd));
@@ -6553,7 +6545,6 @@ pf_test6(int dir, int pflags, struct ifnet *ifp, struct mbuf **m0, struct inpcb 
 	struct pf_pdesc		 pd;
 	int			 off, terminal = 0, dirndx, rh_cnt = 0, pqid = 0;
 	int			 share_forward = V_pf_share_forward6;
-	u_short			 ifidx;
 
 	PF_RULES_RLOCK_TRACKER;
 	M_ASSERTPKTHDR(m);
@@ -6561,15 +6552,8 @@ pf_test6(int dir, int pflags, struct ifnet *ifp, struct mbuf **m0, struct inpcb 
 	if (!V_pf_status.running)
 		return (PF_PASS);
 
-	/* restore the correct forwarding interface */
-	if (share_forward && dir == PF_OUT && IP6_HAS_NEXTHOP(m) &&
-	    !ip6_get_fwdtag(m, NULL, &ifidx)) {
-		if (ifidx != 0) {
-			struct ifnet *nifp = ifnet_byindex(ifidx);
-			if (nifp != NULL) {
-				ifp = nifp;
-			}
-		}
+	if (share_forward && dir == PF_OUT && IP6_HAS_NEXTHOP(m)) {
+		ip6_get_fwdtag(m, NULL, &ifp);
 	}
 
 	memset(&pd, 0, sizeof(pd));
