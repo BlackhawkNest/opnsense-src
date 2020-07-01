@@ -1913,15 +1913,16 @@ mrsas_track_scsiio(struct mrsas_softc *sc, target_id_t tgt_id, u_int32_t bus_id)
 	 */
 	if (mpt_cmd->ccb_ptr) {
 		/* bus_id = 1 denotes a VD */
-		if (bus_id == 1)
+		if (bus_id == 1) {
 			tgt_id = (mpt_cmd->ccb_ptr->ccb_h.target_id - (MRSAS_MAX_PD - 1));
+		}
 
-			if (mpt_cmd->ccb_ptr->cpi.bus_id == bus_id &&
-			    mpt_cmd->ccb_ptr->ccb_h.target_id == tgt_id) {
-				device_printf(sc->mrsas_dev,
-				    "IO commands pending to target id %d\n", tgt_id);
-				return FAIL;
-			}
+		if (mpt_cmd->ccb_ptr->cpi.bus_id == bus_id &&
+			mpt_cmd->ccb_ptr->ccb_h.target_id == tgt_id) {
+			device_printf(sc->mrsas_dev,
+				"IO commands pending to target id %d\n", tgt_id);
+			return FAIL;
+		}
 		}
 	}
 
