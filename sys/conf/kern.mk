@@ -83,6 +83,9 @@ NO_WCAST_QUAL= -Wno-cast-qual
 .endif
 .endif
 
+OPTIMIZATION_CFLAGS?=	-O2
+CFLAGS+=		${OPTIMIZATION_CFLAGS}
+
 # External compilers may not support our format extensions.  Allow them
 # to be disabled.  WARNING: format checking is disabled in this case.
 .if ${MK_FORMAT_EXTENSIONS} == "no"
