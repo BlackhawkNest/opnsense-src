@@ -250,6 +250,7 @@ static void	em_if_timer(if_ctx_t ctx, uint16_t qid);
 static void	em_if_vlan_register(if_ctx_t ctx, u16 vtag);
 static void	em_if_vlan_unregister(if_ctx_t ctx, u16 vtag);
 static void	em_if_watchdog_reset(if_ctx_t ctx);
+static bool	em_if_needs_restart(if_ctx_t ctx, enum iflib_restart_event event);
 
 static void	em_identify_hardware(if_ctx_t ctx);
 static int	em_allocate_pci_resources(if_ctx_t ctx);
@@ -399,6 +400,7 @@ static device_method_t em_if_methods[] = {
 	DEVMETHOD(ifdi_rx_queue_intr_enable, em_if_rx_queue_intr_enable),
 	DEVMETHOD(ifdi_tx_queue_intr_enable, em_if_tx_queue_intr_enable),
 	DEVMETHOD(ifdi_debug, em_if_debug),
+	DEVMETHOD(ifdi_needs_restart, em_if_needs_restart),
 	DEVMETHOD_END
 };
 
@@ -436,6 +438,7 @@ static device_method_t igb_if_methods[] = {
 	DEVMETHOD(ifdi_rx_queue_intr_enable, igb_if_rx_queue_intr_enable),
 	DEVMETHOD(ifdi_tx_queue_intr_enable, igb_if_tx_queue_intr_enable),
 	DEVMETHOD(ifdi_debug, em_if_debug),
+	DEVMETHOD(ifdi_needs_restart, em_if_needs_restart),
 	DEVMETHOD_END
 };
 
@@ -485,7 +488,7 @@ SYSCTL_INT(_hw_em, OID_AUTO, smart_pwr_down, CTLFLAG_RDTUN, &em_smart_pwr_down,
     0, "Set to true to leave smart power down enabled on newer adapters");
 
 /* Controls whether promiscuous also shows bad packets */
-static int em_debug_sbp = TRUE;
+static int em_debug_sbp = FALSE;
 SYSCTL_INT(_hw_em, OID_AUTO, sbp, CTLFLAG_RDTUN, &em_debug_sbp, 0,
     "Show bad packets in promiscuous mode");
 
@@ -1321,10 +1324,15 @@ em_if_init(if_ctx_t ctx)
 			ctrl |= E1000_CTRL_VME;
 			E1000_WRITE_REG(&adapter->hw, E1000_CTRL, ctrl);
 		}
+	} else {
+		u32 ctrl;
+		ctrl = E1000_READ_REG(&adapter->hw, E1000_CTRL);
+		ctrl &= ~E1000_CTRL_VME;
+		E1000_WRITE_REG(&adapter->hw, E1000_CTRL, ctrl);
 	}
 
 	/* Don't lose promiscuous settings */
-	em_if_set_promisc(ctx, IFF_PROMISC);
+	em_if_set_promisc(ctx, if_getflags(ifp));
 	e1000_clear_hw_cntrs_base_generic(&adapter->hw);
 
 	/* MSI-X configuration for 82574 */
@@ -3903,6 +3911,7 @@ em_disable_aspm(struct adapter *adapter)
 static void
 em_update_stats_counters(struct adapter *adapter)
 {
+	u64 prev_xoffrxc = adapter->stats.xoffrxc;
 
 	if(adapter->hw.phy.media_type == e1000_media_type_copper ||
 	   (E1000_READ_REG(&adapter->hw, E1000_STATUS) & E1000_STATUS_LU)) {
@@ -3926,7 +3935,8 @@ em_update_stats_counters(struct adapter *adapter)
 	 ** For watchdog management we need to know if we have been
 	 ** paused during the last interval, so capture that here.
 	*/
-	adapter->shared->isc_pause_frames = adapter->stats.xoffrxc;
+	if (adapter->stats.xoffrxc != prev_xoffrxc)
+		adapter->shared->isc_pause_frames = 1;
 	adapter->stats.xofftxc += E1000_READ_REG(&adapter->hw, E1000_XOFFTXC);
 	adapter->stats.fcruc += E1000_READ_REG(&adapter->hw, E1000_FCRUC);
 	adapter->stats.prc64 += E1000_READ_REG(&adapter->hw, E1000_PRC64);
@@ -4015,6 +4025,24 @@ em_if_get_counter(if_ctx_t ctx, ift_counter cnt)
 		    adapter->watchdog_events);
 	default:
 		return (if_get_counter_default(ifp, cnt));
+	}
+}
+
+/* em_if_needs_restart - Tell iflib when the driver needs to be reinitialized
+ * @ctx: iflib context
+ * @event: event code to check
+ *
+ * Defaults to returning true for unknown events.
+ *
+ * @returns true if iflib needs to reinit the interface
+ */
+static bool
+em_if_needs_restart(if_ctx_t ctx __unused, enum iflib_restart_event event)
+{
+	switch (event) {
+	case IFLIB_RESTART_VLAN_CONFIG:
+	default:
+		return (true);
 	}
 }
 
