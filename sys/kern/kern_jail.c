@@ -50,6 +50,7 @@ __FBSDID("$FreeBSD$");
 #include <sys/taskqueue.h>
 #include <sys/fcntl.h>
 #include <sys/jail.h>
+#include <sys/linker.h>
 #include <sys/lock.h>
 #include <sys/mutex.h>
 #include <sys/racct.h>
@@ -63,6 +64,7 @@ __FBSDID("$FreeBSD$");
 #include <sys/socket.h>
 #include <sys/syscallsubr.h>
 #include <sys/sysctl.h>
+#include <sys/uuid.h>
 #include <sys/vnode.h>
 
 #include <net/if.h>
@@ -77,6 +79,7 @@ __FBSDID("$FreeBSD$");
 #include <security/mac/mac_framework.h>
 
 #define	DEFAULT_HOSTUUID	"00000000-0000-0000-0000-000000000000"
+#define	PRISON0_HOSTUUID_MODULE	"hostuuid"
 
 MALLOC_DEFINE(M_PRISON, "prison", "Prison structures");
 static MALLOC_DEFINE(M_PRISON_RACCT, "prison_racct", "Prison racct structures");
@@ -198,12 +201,14 @@ static struct bool_flags pr_flag_allow[NBBY * NBPW] = {
 	{"allow.read_msgbuf", "allow.noread_msgbuf", PR_ALLOW_READ_MSGBUF},
 	{"allow.unprivileged_proc_debug", "allow.nounprivileged_proc_debug",
 	 PR_ALLOW_UNPRIV_DEBUG},
+	{"allow.extattr", "allow.noextattr", PR_ALLOW_EXTATTR},
 };
 const size_t pr_flag_allow_size = sizeof(pr_flag_allow);
 
 #define	JAIL_DEFAULT_ALLOW		(PR_ALLOW_SET_HOSTNAME | \
 					 PR_ALLOW_RESERVED_PORTS | \
-					 PR_ALLOW_UNPRIV_DEBUG)
+					 PR_ALLOW_UNPRIV_DEBUG | \
+					 PR_ALLOW_EXTATTR)
 #define	JAIL_DEFAULT_ENFORCE_STATFS	2
 #define	JAIL_DEFAULT_DEVFS_RSNUM	0
 static unsigned jail_default_allow = JAIL_DEFAULT_ALLOW;
@@ -220,6 +225,8 @@ static unsigned jail_max_af_ips = 255;
 void
 prison0_init(void)
 {
+	uint8_t *file, *data;
+	size_t size;
 
 	prison0.pr_cpuset = cpuset_ref(thread0.td_cpuset);
 	prison0.pr_osreldate = osreldate;
@@ -228,6 +235,31 @@ prison0_init(void)
 #ifdef PAX
 	(void)pax_init_prison(&prison0, NULL);
 #endif
+	/* If we have a preloaded hostuuid, use it. */
+	file = preload_search_by_type(PRISON0_HOSTUUID_MODULE);
+	if (file != NULL) {
+		data = preload_fetch_addr(file);
+		size = preload_fetch_size(file);
+		if (data != NULL) {
+			/*
+			 * The preloaded data may include trailing whitespace, almost
+			 * certainly a newline; skip over any whitespace or
+			 * non-printable characters to be safe.
+			 */
+			while (size > 0 && data[size - 1] <= 0x20) {
+				data[size--] = '\0';
+			}
+			if (validate_uuid(data, size, NULL, 0) == 0) {
+				(void)strlcpy(prison0.pr_hostuuid, data,
+				    size + 1);
+			} else if (bootverbose) {
+				printf("hostuuid: preload data malformed: '%s'",
+				    data);
+			}
+		}
+	}
+	if (bootverbose)
+		printf("hostuuid: using %s\n", prison0.pr_hostuuid);
 }
 
 /*
@@ -923,40 +955,45 @@ kern_jail_set(struct thread *td, struct uio *optuio, int flags)
 			error = EINVAL;
 			goto done_free;
 		}
-		NDINIT(&nd, LOOKUP, FOLLOW | LOCKLEAF, UIO_SYSSPACE,
-		    path, td);
-		error = namei(&nd);
-		if (error)
-			goto done_free;
-		root = nd.ni_vp;
-		NDFREE(&nd, NDF_ONLY_PNBUF);
-		g_path = malloc(MAXPATHLEN, M_TEMP, M_WAITOK);
-		strlcpy(g_path, path, MAXPATHLEN);
-		error = vn_path_to_global_path(td, root, g_path, MAXPATHLEN);
-		if (error == 0)
-			path = g_path;
-		else if (error == ENODEV) {
-			/* proceed if sysctl debug.disablefullpath == 1 */
-			fullpath_disabled = 1;
-			if (len < 2 || (len == 2 && path[0] == '/'))
-				path = NULL;
-		} else {
-			/* exit on other errors */
-			goto done_free;
-		}
-		if (root->v_type != VDIR) {
-			error = ENOTDIR;
-			vput(root);
-			goto done_free;
-		}
-		VOP_UNLOCK(root, 0);
-		if (fullpath_disabled) {
-			/* Leave room for a real-root full pathname. */
-			if (len + (path[0] == '/' && strcmp(mypr->pr_path, "/")
-			    ? strlen(mypr->pr_path) : 0) > MAXPATHLEN) {
-				error = ENAMETOOLONG;
-				vrele(root);
+		if (len < 2 || (len == 2 && path[0] == '/'))
+			path = NULL;
+		else
+		{
+			NDINIT(&nd, LOOKUP, FOLLOW | LOCKLEAF, UIO_SYSSPACE,
+			    path, td);
+			error = namei(&nd);
+			if (error)
 				goto done_free;
+			root = nd.ni_vp;
+			NDFREE(&nd, NDF_ONLY_PNBUF);
+			g_path = malloc(MAXPATHLEN, M_TEMP, M_WAITOK);
+			strlcpy(g_path, path, MAXPATHLEN);
+			error = vn_path_to_global_path(td, root, g_path,
+			    MAXPATHLEN);
+			if (error == 0)
+				path = g_path;
+			else if (error == ENODEV) {
+				/* means sysctl debug.disablefullpath == 1 */
+				fullpath_disabled = 1;
+			} else {
+				/* exit on other errors */
+				goto done_free;
+			}
+			if (root->v_type != VDIR) {
+				error = ENOTDIR;
+				vput(root);
+				goto done_free;
+			}
+			VOP_UNLOCK(root, 0);
+			if (fullpath_disabled) {
+				/* Leave room for a real-root full pathname. */
+				if (len + (path[0] == '/' &&
+				    strcmp(mypr->pr_path, "/")
+				    ? strlen(mypr->pr_path) : 0) > MAXPATHLEN) {
+					error = ENAMETOOLONG;
+					vrele(root);
+					goto done_free;
+				}
 			}
 		}
 	}
@@ -2945,6 +2982,15 @@ getcredhostid(struct ucred *cred, unsigned long *hostid)
 	mtx_unlock(&cred->cr_prison->pr_mtx);
 }
 
+void
+getjailname(struct ucred *cred, char *name, size_t len)
+{
+
+	mtx_lock(&cred->cr_prison->pr_mtx);
+	strlcpy(name, cred->cr_prison->pr_name, len);
+	mtx_unlock(&cred->cr_prison->pr_mtx);
+}
+
 #ifdef VIMAGE
 /*
  * Determine whether the prison represented by cred owns
@@ -3113,10 +3159,8 @@ prison_priv_check(struct ucred *cred, int priv)
 		/*
 		 * 802.11-related privileges.
 		 */
-	case PRIV_NET80211_GETKEY:
-#ifdef notyet
-	case PRIV_NET80211_MANAGE:		/* XXX-BZ discuss with sam@ */
-#endif
+	case PRIV_NET80211_VAP_GETKEY:
+	case PRIV_NET80211_VAP_MANAGE:
 
 #ifdef notyet
 		/*
@@ -3392,6 +3436,12 @@ prison_priv_check(struct ucred *cred, int priv)
 		if (cred->cr_prison->pr_allow & PR_ALLOW_READ_MSGBUF)
 			return (0);
 		return (EPERM);
+
+	case PRIV_VFS_EXTATTR_SYSTEM:
+		if (cred->cr_prison->pr_allow & PR_ALLOW_EXTATTR)
+			return (0);
+		else
+			return (EPERM);
 
 	default:
 		/*
@@ -3817,6 +3867,8 @@ SYSCTL_JAIL_PARAM(_allow, read_msgbuf, CTLTYPE_INT | CTLFLAG_RW,
     "B", "Jail may read the kernel message buffer");
 SYSCTL_JAIL_PARAM(_allow, unprivileged_proc_debug, CTLTYPE_INT | CTLFLAG_RW,
     "B", "Unprivileged processes may use process debugging facilities");
+SYSCTL_JAIL_PARAM(_allow, extattr, CTLTYPE_INT | CTLFLAG_RW,
+    "B", "Jails may set system-level filesystem extended attributes");
 
 SYSCTL_JAIL_PARAM_SUBNODE(allow, mount, "Jail mount/unmount permission flags");
 SYSCTL_JAIL_PARAM(_allow_mount, , CTLTYPE_INT | CTLFLAG_RW,

@@ -15,7 +15,6 @@ alias ll	ls -lAF
 # These are normally set through /etc/login.conf.  You may override them here
 # if wanted.
 # set path = (/sbin /bin /usr/sbin /usr/bin /usr/local/sbin /usr/local/bin $HOME/bin)
-# setenv	BLOCKSIZE	K
 # A righteous umask
 # umask 22
 
@@ -39,10 +38,6 @@ if ($?prompt) then
 		bindkey "^W" backward-delete-word
 		bindkey -k up history-search-backward
 		bindkey -k down history-search-forward
-		bindkey "\e[1~" beginning-of-line
-		bindkey "\e[2~" overwrite-mode
-		bindkey "\e[3~" delete-char
-		bindkey "\e[4~" end-of-line
 	endif
 
 endif

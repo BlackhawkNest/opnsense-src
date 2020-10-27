@@ -214,24 +214,24 @@ udp6_input(struct mbuf **mp, int *offp, int proto)
 	int off = *offp;
 	int cscov_partial;
 	int plen, ulen;
-	struct sockaddr_in6 next_hop6;
 	struct epoch_tracker et;
 	struct sockaddr_in6 fromsa[2];
+	struct m_tag *fwd_tag;
 	uint16_t uh_sum;
 	uint8_t nxt;
 
 	ifp = m->m_pkthdr.rcvif;
 
-#ifndef PULLDOWN_TEST
-	IP6_EXTHDR_CHECK(m, off, sizeof(struct udphdr), IPPROTO_DONE);
+	if (m->m_len < off + sizeof(struct udphdr)) {
+		m = m_pullup(m, off + sizeof(struct udphdr));
+		if (m == NULL) {
+			IP6STAT_INC(ip6s_exthdrtoolong);
+			*mp = NULL;
+			return (IPPROTO_DONE);
+		}
+	}
 	ip6 = mtod(m, struct ip6_hdr *);
 	uh = (struct udphdr *)((caddr_t)ip6 + off);
-#else
-	IP6_EXTHDR_GET(uh, struct udphdr *, m, off, sizeof(*uh));
-	if (!uh)
-		return (IPPROTO_DONE);
-	ip6 = mtod(m, struct ip6_hdr *);
-#endif
 
 	UDPSTAT_INC(udps_ipackets);
 
@@ -394,8 +394,11 @@ udp6_input(struct mbuf **mp, int *offp, int proto)
 						else
 							UDP_PROBE(receive, NULL, last,
 							    ip6, last, uh);
-						if (udp6_append(last, n, off, fromsa))
+						if (udp6_append(last, n, off, fromsa)) {
+							/* XXX-BZ do we leak m here? */
+							*mp = NULL;
 							goto inp_lost;
+						}
 					}
 					INP_RUNLOCK(last);
 				}
@@ -436,6 +439,7 @@ udp6_input(struct mbuf **mp, int *offp, int proto)
 			INP_RUNLOCK(last);
 	inp_lost:
 		INP_INFO_RUNLOCK_ET(pcbinfo, et);
+		*mp = NULL;
 		return (IPPROTO_DONE);
 	}
 	/*
@@ -443,9 +447,14 @@ udp6_input(struct mbuf **mp, int *offp, int proto)
 	 */
 
 	/*
-	 * Grab info from IP forward tag prepended to the chain.
+	 * Grab info from PACKET_TAG_IPFORWARD tag prepended to the chain.
 	 */
-	if (IP6_HAS_NEXTHOP(m) && !ip6_get_fwdtag(m, &next_hop6, NULL)) {
+	if ((m->m_flags & M_IP6_NEXTHOP) &&
+	    (fwd_tag = m_tag_find(m, PACKET_TAG_IPFORWARD, NULL)) != NULL) {
+		struct sockaddr_in6 *next_hop6;
+
+		next_hop6 = (struct sockaddr_in6 *)(fwd_tag + 1);
+
 		/*
 		 * Transparently forwarded. Pretend to be the destination.
 		 * Already got one like this?
@@ -460,20 +469,21 @@ udp6_input(struct mbuf **mp, int *offp, int proto)
 			 * any hardware-generated hash is ignored.
 			 */
 			inp = in6_pcblookup(pcbinfo, &ip6->ip6_src,
-			    uh->uh_sport, &next_hop6.sin6_addr,
-			    next_hop6.sin6_port ? htons(next_hop6.sin6_port) :
+			    uh->uh_sport, &next_hop6->sin6_addr,
+			    next_hop6->sin6_port ? htons(next_hop6->sin6_port) :
 			    uh->uh_dport, INPLOOKUP_WILDCARD |
 			    INPLOOKUP_RLOCKPCB, m->m_pkthdr.rcvif);
 		}
 		/* Remove the tag from the packet. We don't need it anymore. */
-		ip6_flush_fwdtag(m);
+		m_tag_delete(m, fwd_tag);
+		m->m_flags &= ~M_IP6_NEXTHOP;
 	} else
 		inp = in6_pcblookup_mbuf(pcbinfo, &ip6->ip6_src,
 		    uh->uh_sport, &ip6->ip6_dst, uh->uh_dport,
 		    INPLOOKUP_WILDCARD | INPLOOKUP_RLOCKPCB,
 		    m->m_pkthdr.rcvif, m);
 	if (inp == NULL) {
-		if (udp_log_in_vain) {
+		if (V_udp_log_in_vain) {
 			char ip6bufs[INET6_ADDRSTRLEN];
 			char ip6bufd[INET6_ADDRSTRLEN];
 
@@ -497,6 +507,7 @@ udp6_input(struct mbuf **mp, int *offp, int proto)
 		if (V_udp_blackhole)
 			goto badunlocked;
 		icmp6_error(m, ICMP6_DST_UNREACH, ICMP6_DST_UNREACH_NOPORT, 0);
+		*mp = NULL;
 		return (IPPROTO_DONE);
 	}
 	INP_RLOCK_ASSERT(inp);
@@ -505,6 +516,7 @@ udp6_input(struct mbuf **mp, int *offp, int proto)
 		if (up->u_rxcslen == 0 || up->u_rxcslen > ulen) {
 			INP_RUNLOCK(inp);
 			m_freem(m);
+			*mp = NULL;
 			return (IPPROTO_DONE);
 		}
 	}
@@ -514,6 +526,7 @@ udp6_input(struct mbuf **mp, int *offp, int proto)
 		UDP_PROBE(receive, NULL, inp, ip6, inp, uh);
 	if (udp6_append(inp, m, off, fromsa) == 0)
 		INP_RUNLOCK(inp);
+	*mp = NULL;
 	return (IPPROTO_DONE);
 
 badheadlocked:
@@ -521,6 +534,7 @@ badheadlocked:
 badunlocked:
 	if (m)
 		m_freem(m);
+	*mp = NULL;
 	return (IPPROTO_DONE);
 }
 
@@ -790,7 +804,7 @@ retry:
 				in6_sin6_2_sin_in_sock((struct sockaddr *)sin6);
 			pru = inetsw[ip_protox[nxt]].pr_usrreqs;
 			/* addr will just be freed in sendit(). */
-			return ((*pru->pru_send)(so, flags_arg, m,
+			return ((*pru->pru_send)(so, flags_arg | PRUS_IPV6, m,
 			    (struct sockaddr *)sin6, control, td));
 		}
 	} else

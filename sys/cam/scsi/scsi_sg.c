@@ -570,7 +570,7 @@ sgioctl(struct cdev *dev, u_long cmd, caddr_t arg, int flag, struct thread *td)
 			dir = CAM_DIR_IN;
 			break;
 		case SG_DXFER_TO_FROM_DEV:
-			dir = CAM_DIR_IN | CAM_DIR_OUT;
+			dir = CAM_DIR_BOTH;
 			break;
 		case SG_DXFER_NONE:
 		default:

@@ -189,6 +189,7 @@ The
 .Ar counters
 flag enables per-address packet and byte counters which can be displayed with
 .Xr pfctl 8 .
+Note that this feature carries significant memory overhead for large tables.
 .El
 .Pp
 For example,
@@ -1511,7 +1512,7 @@ Do not include interface aliases.
 Host names may also have the
 .Ar :0
 option appended to restrict the name resolution to the first of each
-v4 and non-link-local v6 address found.
+v4 and v6 address found.
 .Pp
 Host name resolution and interface to address translation are done at
 ruleset load-time.

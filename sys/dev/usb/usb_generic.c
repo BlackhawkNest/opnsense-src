@@ -2223,10 +2223,9 @@ ugen_ioctl_post(struct usb_fifo *f, u_long cmd, void *addr, int fflags)
 		for (n = 0; n != 4; n++) {
 
 			u.stat->uds_requests_fail[n] =
-			    f->udev->bus->stats_err.uds_requests[n];
-
+			    f->udev->stats_err.uds_requests[n];
 			u.stat->uds_requests_ok[n] =
-			    f->udev->bus->stats_ok.uds_requests[n];
+			    f->udev->stats_ok.uds_requests[n];
 		}
 		break;
 
@@ -2339,11 +2338,6 @@ ugen_ioctl_post(struct usb_fifo *f, u_long cmd, void *addr, int fflags)
 		}
 		f->fs_xfer = malloc(sizeof(f->fs_xfer[0]) *
 		    u.pinit->ep_index_max, M_USB, M_WAITOK | M_ZERO);
-		if (f->fs_xfer == NULL) {
-			usb_fifo_free_buffer(f);
-			error = ENOMEM;
-			break;
-		}
 		f->fs_ep_max = u.pinit->ep_index_max;
 		f->fs_ep_ptr = u.pinit->pEndpoints;
 		break;

@@ -11,9 +11,10 @@ CONFS=	DAEMON \
 	LOGIN \
 	NETWORKING \
 	SERVERS \
-	abi \
 	addswap \
 	adjkerntz \
+	auditd \
+	auditdistd \
 	bgfsck \
 	${_blacklistd} \
 	${_bluetooth} \
@@ -53,6 +54,7 @@ CONFS=	DAEMON \
 	kldxref \
 	${_kpasswdd} \
 	ldconfig \
+	linux \
 	local \
 	localpkg \
 	lockd \
@@ -79,6 +81,7 @@ CONFS=	DAEMON \
 	nsswitch \
 	ntpdate \
 	${_opensm} \
+	os-release \
 	pf \
 	pflog \
 	pfsync \
@@ -109,6 +112,7 @@ CONFS=	DAEMON \
 	swaplate \
 	sysctl \
 	syslogd \
+	sysvipc \
 	tmp \
 	${_ubthidhci} \
 	ugidfw \

@@ -1,4 +1,5 @@
 # $FreeBSD$
+#
 
 RPCDIR=	${DESTDIR}/usr/include/rpcsvc
 

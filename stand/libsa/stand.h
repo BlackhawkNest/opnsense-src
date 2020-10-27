@@ -126,6 +126,7 @@ extern struct fs_ops dosfs_fsops;
 extern struct fs_ops ext2fs_fsops;
 extern struct fs_ops splitfs_fsops;
 extern struct fs_ops pkgfs_fsops;
+extern struct fs_ops efihttp_fsops;
 
 /* where values for lseek(2) */
 #define	SEEK_SET	0	/* set file offset to offset */
@@ -433,6 +434,8 @@ void *Realloc(void *, size_t, const char *, int);
 void *Reallocf(void *, size_t, const char *, int);
 void Free(void *, const char *, int);
 extern void	mallocstats(void);
+
+const char *x86_hypervisor(void);
 
 #ifdef DEBUG_MALLOC
 #define malloc(x)	Malloc(x, __FILE__, __LINE__)

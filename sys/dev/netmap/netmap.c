@@ -3316,7 +3316,8 @@ nmreq_getoption(struct nmreq_header *hdr, uint16_t reqtype)
 	if (!hdr->nr_options)
 		return NULL;
 
-	opt_tab = (struct nmreq_option **)(hdr->nr_options) - (NETMAP_REQ_OPT_MAX + 1);
+	opt_tab = (struct nmreq_option **)((uintptr_t)hdr->nr_options) -
+	    (NETMAP_REQ_OPT_MAX + 1);
 	return opt_tab[reqtype];
 }
 
@@ -4029,7 +4030,7 @@ netmap_transmit(struct ifnet *ifp, struct mbuf *m)
 	if (busy < 0)
 		busy += kring->nkr_num_slots;
 	if (busy + mbq_len(q) >= kring->nkr_num_slots - 1) {
-		nm_prdis(2, "%s full hwcur %d hwtail %d qlen %d", na->name,
+		nm_prlim(2, "%s full hwcur %d hwtail %d qlen %d", na->name,
 			kring->nr_hwcur, kring->nr_hwtail, mbq_len(q));
 	} else {
 		mbq_enqueue(q, m);

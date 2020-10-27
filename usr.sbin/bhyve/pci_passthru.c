@@ -639,6 +639,9 @@ cfginit(struct vmctx *ctx, struct pci_devinst *pi, int bus, int slot, int func)
 		goto done;
 	}
 
+	pci_set_cfgdata16(pi, PCIR_COMMAND, read_config(&sc->psc_sel,
+	    PCIR_COMMAND, 2));
+
 	error = 0;				/* success */
 done:
 	return (error);
@@ -803,6 +806,19 @@ passthru_cfgread(struct vmctx *ctx, int vcpu, struct pci_devinst *pi,
 	}
 #endif
 
+	/*
+	 * Emulate the command register.  If a single read reads both the
+	 * command and status registers, read the status register from the
+	 * device's config space.
+	 */
+	if (coff == PCIR_COMMAND) {
+		if (bytes <= 2)
+			return (-1);
+		*rv = read_config(&sc->psc_sel, PCIR_STATUS, 2) << 16 |
+		    pci_get_cfgdata16(pi, PCIR_COMMAND);
+		return (0);
+	}
+
 	/* Everything else just read from the device's config space */
 	*rv = read_config(&sc->psc_sel, coff, bytes);
 
@@ -815,6 +831,7 @@ passthru_cfgwrite(struct vmctx *ctx, int vcpu, struct pci_devinst *pi,
 {
 	int error, msix_table_entries, i;
 	struct passthru_softc *sc;
+	uint16_t cmd_old;
 
 	sc = pi->pi_arg;
 
@@ -872,6 +889,14 @@ passthru_cfgwrite(struct vmctx *ctx, int vcpu, struct pci_devinst *pi,
 #endif
 
 	write_config(&sc->psc_sel, coff, bytes, val);
+	if (coff == PCIR_COMMAND) {
+		cmd_old = pci_get_cfgdata16(pi, PCIR_COMMAND);
+		if (bytes == 1)
+			pci_set_cfgdata8(pi, PCIR_COMMAND, val);
+		else if (bytes == 2)
+			pci_set_cfgdata16(pi, PCIR_COMMAND, val);
+		pci_emul_cmd_changed(pi, cmd_old);
+	}
 
 	return (0);
 }

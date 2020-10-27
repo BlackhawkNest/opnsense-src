@@ -221,6 +221,7 @@ int	pci_emul_add_msicap(struct pci_devinst *pi, int msgnum);
 int	pci_emul_add_pciecap(struct pci_devinst *pi, int pcie_device_type);
 void	pci_emul_capwrite(struct pci_devinst *pi, int offset, int bytes,
 	    uint32_t val, uint8_t capoff, int capid);
+void	pci_emul_cmd_changed(struct pci_devinst *pi, uint16_t old);
 void	pci_generate_msi(struct pci_devinst *pi, int msgnum);
 void	pci_generate_msix(struct pci_devinst *pi, int msgnum);
 void	pci_lintr_assert(struct pci_devinst *pi);

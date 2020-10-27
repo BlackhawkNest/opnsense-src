@@ -8,6 +8,8 @@ SUBDIR_PARALLEL=
 # Modules that include binary-only blobs of microcode should be selectable by
 # MK_SOURCELESS_UCODE option (see below).
 
+.include "${SYSDIR}/conf/config.mk"
+
 .if defined(MODULES_OVERRIDE) && !defined(ALL_MODULES)
 SUBDIR=${MODULES_OVERRIDE}
 .else
@@ -41,7 +43,6 @@ SUBDIR=	\
 	amr \
 	${_an} \
 	${_apm} \
-	${_apuled} \
 	${_arcmsr} \
 	${_allwinner} \
 	${_armv8crypto} \
@@ -156,6 +157,8 @@ SUBDIR=	\
 	${_iavf} \
         ${_ibcore} \
 	${_ichwd} \
+	${_ice} \
+	${_ice_ddp} \
 	${_ida} \
 	if_bridge \
 	if_disc \
@@ -168,8 +171,7 @@ SUBDIR=	\
 	if_lagg \
 	${_if_ndis} \
 	${_if_stf} \
-	if_tap \
-	if_tun \
+	if_tuntap \
 	if_vlan \
 	if_vxlan \
 	iflib \
@@ -338,9 +340,11 @@ SUBDIR=	\
 	${_rtwnfw} \
 	${_s3} \
 	${_safe} \
+	safexcel \
 	${_sbni} \
 	scc \
 	${_scsi_low} \
+	${_sctp} \
 	sdhci \
 	${_sdhci_acpi} \
 	sdhci_pci \
@@ -367,6 +371,8 @@ SUBDIR=	\
 	ste \
 	${_stg} \
 	stge \
+	${_sume} \
+	${_superio} \
 	${_sym} \
 	${_syscons} \
 	sysvipc \
@@ -416,6 +422,7 @@ SUBDIR=	\
 	${_wpi} \
 	${_wpifw} \
 	${_x86bios} \
+	xdr \
 	${_xe} \
 	xl \
 	xz \
@@ -455,8 +462,11 @@ _if_enc=	if_enc
 _if_gif=	if_gif
 _if_gre=	if_gre
 _ipfw_pmod=	ipfw_pmod
-.if ${MK_IPSEC_SUPPORT} != "no"
+.if ${KERN_OPTS:MIPSEC_SUPPORT} && !${KERN_OPTS:MIPSEC}
 _ipsec=		ipsec
+.endif
+.if ${MK_SCTP_SUPPORT} != "no" || ${MK_SCTP} != "no"
+_sctp=		sctp
 .endif
 .endif
 
@@ -557,6 +567,13 @@ _rtwnfw=	rtwnfw
 _cxgbe=		cxgbe
 .endif
 
+.if ${MACHINE_ARCH} == "amd64" || ${MACHINE_ARCH} == "arm64"
+_ice=		ice
+.if ${MK_SOURCELESS_UCODE} != "no"
+_ice_ddp=	ice_ddp
+.endif
+.endif
+
 # These rely on 64bit atomics
 .if ${MACHINE_ARCH} != "powerpc" && ${MACHINE_CPUARCH} != "mips"
 _mps=		mps
@@ -604,7 +621,6 @@ _rockchip=	rockchip
 .if ${MACHINE_CPUARCH} == "i386" || ${MACHINE_CPUARCH} == "amd64"
 _agp=		agp
 _an=		an
-_apuled=	apuled
 _bios=		bios
 _bktr=		bktr
 .if ${MK_SOURCELESS_UCODE} != "no"
@@ -715,6 +731,7 @@ _rdrand_rng=	rdrand_rng
 .endif
 _s3=		s3
 _sdhci_acpi=	sdhci_acpi
+_superio=	superio
 _tpm=		tpm
 _twa=		twa
 _vesa=		vesa
@@ -741,6 +758,7 @@ _nvdimm=	nvdimm
 _pms=		pms
 _qlxge=		qlxge
 _qlxgb=		qlxgb
+_sume=		sume
 .if ${MK_SOURCELESS_UCODE} != "no"
 _qlxgbe=	qlxgbe
 _qlnx=		qlnx
@@ -814,6 +832,8 @@ _wi=		wi
 _drm2=		drm2
 .endif
 _ipmi=		ipmi
+_ixl=		ixl
+_nvram=		opal_nvram
 .endif
 .if ${MACHINE_ARCH} == "powerpc64" || ${MACHINE_ARCH} == "powerpc"
 # Don't build powermac_nvram for powerpcspe, it's never supported.
@@ -856,8 +876,6 @@ afterinstall: .PHONY
 		kldxref ${DESTDIR}${KMODDIR}; \
 	fi
 .endif
-
-.include "${SYSDIR}/conf/config.mk"
 
 SUBDIR:= ${SUBDIR:u:O}
 

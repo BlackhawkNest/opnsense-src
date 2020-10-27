@@ -35,9 +35,21 @@
     ..
     lib
         clang
-            8.0.1
+            10.0.1
                 include
+                    cuda_wrappers
+                    ..
+                    fuzzer
+                    ..
+                    openmp_wrappers
+                    ..
+                    ppc_wrappers
+                    ..
+                    profile
+                    ..
                     sanitizer
+                    ..
+                    xray
                     ..
                 ..
                 lib
@@ -186,6 +198,12 @@
             ru_RU.UTF-8
             ..
             uk_UA.KOI8-U
+            ..
+        ..
+        certs
+            blacklisted
+            ..
+            trusted
             ..
         ..
         dict
@@ -1168,6 +1186,8 @@
                 ..
                 man5
                 ..
+                man7
+		..
                 man8
                 ..
             ..
@@ -1241,15 +1261,25 @@
             ..
             Australia
             ..
+            Brazil
+            ..
+            Canada
+            ..
+            Chile
+            ..
             Etc
             ..
             Europe
             ..
             Indian
             ..
+            Mexico
+            ..
             Pacific
             ..
             SystemV
+            ..
+            US
             ..
         ..
     ..

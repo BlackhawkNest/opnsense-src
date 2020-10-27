@@ -37,6 +37,7 @@ __FBSDID("$FreeBSD$");
 #include "opt_bootp.h"
 #include "opt_ipstealth.h"
 #include "opt_ipsec.h"
+#include "opt_pax.h"
 #include "opt_route.h"
 #include "opt_rss.h"
 
@@ -128,7 +129,12 @@ SYSCTL_INT(_net_inet_ip, IPCTL_SENDREDIRECTS, redirect, CTLFLAG_VNET | CTLFLAG_R
  * to the loopback interface instead of the interface where the
  * packets for those addresses are received.
  */
+
+#ifdef PAX_HARDENING
+VNET_DEFINE_STATIC(int, ip_checkinterface) = 1;
+#else
 VNET_DEFINE_STATIC(int, ip_checkinterface);
+#endif
 #define	V_ip_checkinterface	VNET(ip_checkinterface)
 SYSCTL_INT(_net_inet_ip, OID_AUTO, check_interface, CTLFLAG_VNET | CTLFLAG_RW,
     &VNET_NAME(ip_checkinterface), 0,
@@ -469,16 +475,6 @@ ip_input(struct mbuf *m)
 		goto ours;
 	}
 
-	if (m->m_flags & M_SKIP_PFIL) {
-		m->m_flags &= ~M_SKIP_PFIL;
-		/* Set up some basics that will be used later. */
-		ip = mtod(m, struct ip *);
-		hlen = ip->ip_hl << 2;
-		ip_len = ntohs(ip->ip_len);
-		ifp = m->m_pkthdr.rcvif;
-		goto reinjected;
-	}
-
 	IPSTAT_INC(ips_total);
 
 	if (m->m_pkthdr.len < sizeof(struct ip))
@@ -626,15 +622,16 @@ tooshort:
 		m->m_flags &= ~M_FASTFWD_OURS;
 		goto ours;
 	}
-reinjected:
-	if (IP_HAS_NEXTHOP(m)) {
-		/*
-		 * Directly ship the packet on.  This allows
-		 * forwarding packets originally destined to us
-		 * to some other directly connected host.
-		 */
-		ip_forward(m, 1);
-		return;
+	if (m->m_flags & M_IP_NEXTHOP) {
+		if (m_tag_find(m, PACKET_TAG_IPFORWARD, NULL) != NULL) {
+			/*
+			 * Directly ship the packet on.  This allows
+			 * forwarding packets originally destined to us
+			 * to some other directly connected host.
+			 */
+			ip_forward(m, 1);
+			return;
+		}
 	}
 passin:
 

@@ -114,11 +114,13 @@ struct xprison {
 
 struct iovec;
 
+__BEGIN_DECLS
 int jail(struct jail *);
 int jail_set(struct iovec *, unsigned int, int);
 int jail_get(struct iovec *, unsigned int, int);
 int jail_attach(int);
 int jail_remove(int);
+__END_DECLS
 
 #else /* _KERNEL */
 
@@ -237,13 +239,15 @@ struct prison_racct {
 #define	PR_ALLOW_UNPRIV_DEBUG		0x00000200
 #define	PR_ALLOW_RESERVED_PORTS		0x00008000
 #define	PR_ALLOW_KMEM_ACCESS		0x00010000	/* reserved, not used yet */
-#define	PR_ALLOW_ALL_STATIC		0x000183ff
+#define	PR_ALLOW_EXTATTR		0x00020000
+#define	PR_ALLOW_ALL_STATIC		0x000383ff
 
 /*
  * PR_ALLOW_DIFFERENCES determines which flags are able to be
  * different between the parent and child jail upon creation.
  */
-#define	PR_ALLOW_DIFFERENCES		(PR_ALLOW_UNPRIV_DEBUG)
+#define	PR_ALLOW_DIFFERENCES		(PR_ALLOW_UNPRIV_DEBUG | \
+    PR_ALLOW_EXTATTR)
 
 /*
  * OSD methods
@@ -380,6 +384,7 @@ void getcredhostname(struct ucred *, char *, size_t);
 void getcreddomainname(struct ucred *, char *, size_t);
 void getcredhostuuid(struct ucred *, char *, size_t);
 void getcredhostid(struct ucred *, unsigned long *);
+void getjailname(struct ucred *cred, char *name, size_t len);
 void prison0_init(void);
 int prison_allow(struct ucred *, unsigned);
 int prison_check(struct ucred *cred1, struct ucred *cred2);

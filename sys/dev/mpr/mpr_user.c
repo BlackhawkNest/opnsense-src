@@ -74,6 +74,7 @@ __FBSDID("$FreeBSD$");
 #include <sys/bus.h>
 #include <sys/conf.h>
 #include <sys/bio.h>
+#include <sys/abi_compat.h>
 #include <sys/malloc.h>
 #include <sys/uio.h>
 #include <sys/sysctl.h>
@@ -177,16 +178,6 @@ static int mpr_user_reg_access(struct mpr_softc *sc, mpr_reg_access_t *data);
 static int mpr_user_btdh(struct mpr_softc *sc, mpr_btdh_mapping_t *data);
 
 static MALLOC_DEFINE(M_MPRUSER, "mpr_user", "Buffers for mpr(4) ioctls");
-
-/* Macros from compat/freebsd32/freebsd32.h */
-#define	PTRIN(v)	(void *)(uintptr_t)(v)
-#define	PTROUT(v)	(uint32_t)(uintptr_t)(v)
-
-#define	CP(src,dst,fld) do { (dst).fld = (src).fld; } while (0)
-#define	PTRIN_CP(src,dst,fld)				\
-	do { (dst).fld = PTRIN((src).fld); } while (0)
-#define	PTROUT_CP(src,dst,fld) \
-	do { (dst).fld = PTROUT((src).fld); } while (0)
 
 /*
  * MPI functions that support IEEE SGLs for SAS3.
@@ -1542,13 +1533,6 @@ mpr_diag_register(struct mpr_softc *sc, mpr_fw_diag_register_t *diag_register,
 	bzero(sc->fw_diag_buffer, buffer_size);
 
 	ctx = malloc(sizeof(*ctx), M_MPR, M_WAITOK | M_ZERO);
-	if (ctx == NULL) {
-		device_printf(sc->mpr_dev, "%s: context malloc failed\n",
-		    __func__);
-		*return_code = MPR_FW_DIAG_ERROR_NO_BUFFER;
-		status = MPR_DIAG_FAILURE;
-		goto bailout;
-	}
 	ctx->addr = &sc->fw_diag_busaddr;
 	ctx->buffer_dmat = sc->fw_diag_dmat;
 	ctx->buffer_dmamap = sc->fw_diag_map;

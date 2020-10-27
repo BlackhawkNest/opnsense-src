@@ -65,5 +65,20 @@ static const struct {
 	.descsz = sizeof(int32_t),
 	.type = NT_FREEBSD_ABI_TAG,
 	.name = NOTE_FREEBSD_VENDOR,
-	.desc = 1201000
+	.desc = 1202000
+};
+
+static const struct {
+	int32_t	namesz;
+	int32_t	descsz;
+	int32_t	type;
+	char	name[sizeof(NOTE_FREEBSD_VENDOR)];
+	uint32_t	desc[1];
+} crt_feature_ctl __attribute__ ((section (NOTE_SECTION),
+    aligned(4))) __used = {
+	.namesz = sizeof(NOTE_FREEBSD_VENDOR),
+	.descsz = sizeof(uint32_t),
+	.type = NT_FREEBSD_FEATURE_CTL,
+	.name = NOTE_FREEBSD_VENDOR,
+	.desc = { 0 }
 };

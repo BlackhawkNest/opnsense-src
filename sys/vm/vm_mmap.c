@@ -187,6 +187,18 @@ int
 kern_mmap(struct thread *td, uintptr_t addr0, size_t size, int prot, int flags,
     int fd, off_t pos)
 {
+
+	return (kern_mmap_fpcheck(td, addr0, size, prot, flags, fd, pos, NULL));
+}
+
+/*
+ * When mmap'ing a file, check_fp_fn may be used for the caller to do any
+ * last-minute validation based on the referenced file in a non-racy way.
+ */
+int
+kern_mmap_fpcheck(struct thread *td, uintptr_t addr0, size_t size, int prot,
+    int flags, int fd, off_t pos, mmap_check_fp_fn check_fp_fn)
+{
 	struct vmspace *vms;
 	struct file *fp;
 	struct proc *p;
@@ -296,10 +308,7 @@ kern_mmap(struct thread *td, uintptr_t addr0, size_t size, int prot, int flags,
 			return (EINVAL);
 
 		/* Address range must be all in user VM space. */
-		if (addr < vm_map_min(&vms->vm_map) ||
-		    addr + size > vm_map_max(&vms->vm_map))
-			return (EINVAL);
-		if (addr + size < addr)
+		if (!vm_map_range_valid(&vms->vm_map, addr, addr + size))
 			return (EINVAL);
 #ifdef MAP_32BIT
 		if (flags & MAP_32BIT && addr + size > MAP_32BIT_MAX_ADDR)
@@ -403,6 +412,11 @@ kern_mmap(struct thread *td, uintptr_t addr0, size_t size, int prot, int flags,
 		KASSERT((flags & MAP_FIXED) == MAP_FIXED || pax_aslr_done == 1,
 		    ("%s: ASLR reqiured ...", __func__));
 #endif
+		if (check_fp_fn != NULL) {
+			error = check_fp_fn(fp, prot, cap_maxprot, flags);
+			if (error != 0)
+				goto done;
+		}
 		/* This relies on VM_PROT_* matching PROT_*. */
 		error = fo_mmap(fp, &vms->vm_map, &addr, size, prot,
 		    cap_maxprot, flags, pos, td);
@@ -551,7 +565,7 @@ kern_munmap(struct thread *td, uintptr_t addr0, size_t size)
 	vm_map_entry_t entry;
 	bool pmc_handled;
 #endif
-	vm_offset_t addr;
+	vm_offset_t addr, end;
 	vm_size_t pageoff;
 	vm_map_t map;
 
@@ -563,15 +577,11 @@ kern_munmap(struct thread *td, uintptr_t addr0, size_t size)
 	addr -= pageoff;
 	size += pageoff;
 	size = (vm_size_t) round_page(size);
-	if (addr + size < addr)
+	end = addr + size;
+	map = &td->td_proc->p_vmspace->vm_map;
+	if (!vm_map_range_valid(map, addr, end))
 		return (EINVAL);
 
-	/*
-	 * Check for illegal addresses.  Watch out for address wrap...
-	 */
-	map = &td->td_proc->p_vmspace->vm_map;
-	if (addr < vm_map_min(map) || addr + size > vm_map_max(map))
-		return (EINVAL);
 	vm_map_lock(map);
 #ifdef HWPMC_HOOKS
 	pmc_handled = false;
@@ -583,7 +593,7 @@ kern_munmap(struct thread *td, uintptr_t addr0, size_t size)
 		 */
 		pkm.pm_address = (uintptr_t) NULL;
 		if (vm_map_lookup_entry(map, addr, &entry)) {
-			for (; entry->start < addr + size;
+			for (; entry->start < end;
 			    entry = entry->next) {
 				if (vm_map_check_protection(map, entry->start,
 					entry->end, VM_PROT_EXECUTE) == TRUE) {
@@ -595,7 +605,7 @@ kern_munmap(struct thread *td, uintptr_t addr0, size_t size)
 		}
 	}
 #endif
-	vm_map_delete(map, addr, addr + size);
+	vm_map_delete(map, addr, end);
 
 #ifdef HWPMC_HOOKS
 	if (__predict_false(pmc_handled)) {
@@ -669,13 +679,21 @@ struct minherit_args {
 int
 sys_minherit(struct thread *td, struct minherit_args *uap)
 {
+
+	return (kern_minherit(td, (uintptr_t)uap->addr, uap->len,
+	    uap->inherit));
+}
+
+int
+kern_minherit(struct thread *td, uintptr_t addr0, size_t len, int inherit0)
+{
 	vm_offset_t addr;
 	vm_size_t size, pageoff;
 	vm_inherit_t inherit;
 
-	addr = (vm_offset_t)uap->addr;
-	size = uap->len;
-	inherit = uap->inherit;
+	addr = (vm_offset_t)addr0;
+	size = len;
+	inherit = inherit0;
 
 	pageoff = (addr & PAGE_MASK);
 	addr -= pageoff;
@@ -732,9 +750,7 @@ kern_madvise(struct thread *td, uintptr_t addr0, size_t len, int behav)
 	 */
 	map = &td->td_proc->p_vmspace->vm_map;
 	addr = addr0;
-	if (addr < vm_map_min(map) || addr + len > vm_map_max(map))
-		return (EINVAL);
-	if ((addr + len) < addr)
+	if (!vm_map_range_valid(map, addr, addr + len))
 		return (EINVAL);
 
 	/*
@@ -1043,7 +1059,7 @@ kern_mlock(struct proc *proc, struct ucred *cred, uintptr_t addr0, size_t len)
 	if (last < addr || end < addr)
 		return (EINVAL);
 	npages = atop(end - start);
-	if (npages > vm_page_max_wired)
+	if ((u_int)npages > vm_page_max_user_wired)
 		return (ENOMEM);
 	map = &proc->p_vmspace->vm_map;
 	PROC_LOCK(proc);
@@ -1053,8 +1069,6 @@ kern_mlock(struct proc *proc, struct ucred *cred, uintptr_t addr0, size_t len)
 		return (ENOMEM);
 	}
 	PROC_UNLOCK(proc);
-	if (npages + vm_wire_count() > vm_page_max_wired)
-		return (EAGAIN);
 #ifdef RACCT
 	if (racct_enable) {
 		PROC_LOCK(proc);
@@ -1131,7 +1145,12 @@ sys_mlockall(struct thread *td, struct mlockall_args *uap)
 		 */
 		error = vm_map_wire(map, vm_map_min(map), vm_map_max(map),
 		    VM_MAP_WIRE_USER|VM_MAP_WIRE_HOLESOK);
-		error = (error == KERN_SUCCESS ? 0 : EAGAIN);
+		if (error == KERN_SUCCESS)
+			error = 0;
+		else if (error == KERN_RESOURCE_SHORTAGE)
+			error = ENOMEM;
+		else
+			error = EAGAIN;
 	}
 #ifdef RACCT
 	if (racct_enable && error != KERN_SUCCESS) {
@@ -1275,7 +1294,7 @@ vm_mmap_vnode(struct thread *td, vm_size_t objsize,
 		}
 		if (writex) {
 			*writecounted = TRUE;
-			vnode_pager_update_writecount(obj, 0, objsize);
+			vm_pager_update_writecount(obj, 0, objsize);
 		}
 	} else {
 		error = EINVAL;
@@ -1331,7 +1350,7 @@ vm_mmap_vnode(struct thread *td, vm_size_t objsize,
 done:
 	if (error != 0 && *writecounted) {
 		*writecounted = FALSE;
-		vnode_pager_update_writecount(obj, objsize, 0);
+		vm_pager_update_writecount(obj, objsize, 0);
 	}
 	vput(vp);
 	return (error);
@@ -1466,7 +1485,7 @@ vm_mmap(vm_map_t map, vm_offset_t *addr, vm_size_t size, vm_prot_t prot,
 		 * writecount, then undo that now.
 		 */
 		if (writecounted)
-			vnode_pager_release_writecount(object, 0, size);
+			vm_pager_release_writecount(object, 0, size);
 		vm_object_deallocate(object);
 	}
 	return (error);
@@ -1555,7 +1574,7 @@ vm_mmap_object(vm_map_t map, vm_offset_t *addr, vm_size_t size, vm_prot_t prot,
 	if (flags & MAP_SHARED)
 		docow |= MAP_INHERIT_SHARE;
 	if (writecounted)
-		docow |= MAP_VN_WRITECOUNT;
+		docow |= MAP_WRITECOUNT;
 	if (flags & MAP_STACK) {
 		if (object != NULL)
 			return (EINVAL);
@@ -1598,10 +1617,14 @@ vm_mmap_object(vm_map_t map, vm_offset_t *addr, vm_size_t size, vm_prot_t prot,
 		 * If the process has requested that all future mappings
 		 * be wired, then heed this.
 		 */
-		if (map->flags & MAP_WIREFUTURE) {
-			vm_map_wire(map, *addr, *addr + size,
-			    VM_MAP_WIRE_USER | ((flags & MAP_STACK) ?
-			    VM_MAP_WIRE_HOLESOK : VM_MAP_WIRE_NOHOLES));
+		if ((map->flags & MAP_WIREFUTURE) != 0) {
+			vm_map_lock(map);
+			if ((map->flags & MAP_WIREFUTURE) != 0)
+				(void)vm_map_wire_locked(map, *addr,
+				    *addr + size, VM_MAP_WIRE_USER |
+				    ((flags & MAP_STACK) ? VM_MAP_WIRE_HOLESOK :
+				    VM_MAP_WIRE_NOHOLES));
+			vm_map_unlock(map);
 		}
 	}
 	return (vm_mmap_to_errno(rv));

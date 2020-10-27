@@ -1370,13 +1370,11 @@ struct node_host *
 ifa_exists(char *ifa_name)
 {
 	struct node_host	*n;
-	int			s;
 
 	if (iftab == NULL)
 		ifa_load();
 
 	/* check whether this is a group */
-	s = get_query_socket();
 	if (is_a_group(ifa_name)) {
 		/* fake a node_host */
 		if ((n = calloc(1, sizeof(*n))) == NULL)
@@ -1464,9 +1462,6 @@ ifa_lookup(char *ifa_name, int flags)
 			got4 = got6 = 0;
 		last_if = p->ifname;
 		if ((flags & PFI_AFLAG_NOALIAS) && p->af == AF_INET && got4)
-			continue;
-		if ((flags & PFI_AFLAG_NOALIAS) && p->af == AF_INET6 &&
-		    IN6_IS_ADDR_LINKLOCAL(&p->addr.v.a.addr.v6))
 			continue;
 		if ((flags & PFI_AFLAG_NOALIAS) && p->af == AF_INET6 && got6)
 			continue;
@@ -1563,16 +1558,17 @@ host(const char *s)
 		mask = -1;
 	}
 
-	/* interface with this name exists? */
-	if (cont && (h = host_if(ps, mask)) != NULL)
-		cont = 0;
-
 	/* IPv4 address? */
 	if (cont && (h = host_v4(s, mask)) != NULL)
 		cont = 0;
 
 	/* IPv6 address? */
 	if (cont && (h = host_v6(ps, v6mask)) != NULL)
+		cont = 0;
+
+	/* interface with this name exists? */
+	/* expensive with thousands of interfaces - prioritze IPv4/6 check */
+	if (cont && (h = host_if(ps, mask)) != NULL)
 		cont = 0;
 
 	/* dns lookup */
