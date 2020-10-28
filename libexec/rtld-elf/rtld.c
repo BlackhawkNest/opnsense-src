@@ -232,7 +232,7 @@ static unsigned int obj_count;	/* Number of objects in obj_list */
 static unsigned int obj_loads;	/* Number of loads of objects (gen count) */
 
 #ifdef HARDENEDBSD
-static Elf_Word pax_flags = 0;	/* PaX / HardenedBSD flags */
+static Elf_Word pax_flags = PAX_HARDENING_NOSHLIBRANDOM;	/* PaX / HardenedBSD flags */
 #endif
 
 static Objlist list_global =	/* Objects dlopened with RTLD_GLOBAL */
@@ -438,14 +438,6 @@ _rtld(Elf_Addr *sp, func_ptr_type *exit_proc, Obj_Entry **objp)
     environ = env;
     main_argc = argc;
     main_argv = argv;
-
-#ifdef HARDENEDBSD
-    /* Load PaX flags */
-    if (aux_info[AT_PAXFLAGS] != NULL) {
-        pax_flags = aux_info[AT_PAXFLAGS]->a_un.a_val;
-        aux_info[AT_PAXFLAGS]->a_un.a_val = 0;
-    }
-#endif
 
     trust = !issetugid();
     direct_exec = false;
