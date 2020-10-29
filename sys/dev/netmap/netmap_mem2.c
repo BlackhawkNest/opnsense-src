@@ -564,7 +564,7 @@ struct netmap_mem_d nm_mem = {	/* Our memory allocator. */
 			.num  = 100,
 		},
 		[NETMAP_RING_POOL] = {
-			.size = 18*PAGE_SIZE,
+			.size = 9*PAGE_SIZE,
 			.num  = 200,
 		},
 		[NETMAP_BUF_POOL] = {
@@ -1523,12 +1523,11 @@ static int
 netmap_mem_unmap(struct netmap_obj_pool *p, struct netmap_adapter *na)
 {
 	int i, lim = p->objtotal;
-	struct netmap_lut *lut;
+	struct netmap_lut *lut = &na->na_lut;
 
 	if (na == NULL || na->pdev == NULL)
 		return 0;
 
-	lut = &na->na_lut;
 #if defined(__FreeBSD__)
 	/* On FreeBSD mapping and unmapping is performed by the txsync
 	 * and rxsync routine, packet by packet. */

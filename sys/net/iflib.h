@@ -295,7 +295,7 @@ typedef enum {
 
 
 /*
- * Interface has a separate completion queue for RX
+ * Interface has a separate command queue for RX
  */
 #define IFLIB_HAS_RXCQ		0x01
 /*
@@ -307,7 +307,7 @@ typedef enum {
  */
 #define IFLIB_IS_VF		0x04
 /*
- * Interface has a separate completion queue for TX
+ * Interface has a separate command queue for TX
  */
 #define IFLIB_HAS_TXCQ		0x08
 /*
@@ -374,15 +374,6 @@ typedef enum {
  */
 #define IFLIB_PSEUDO_ETHER	0x80000
 
-
-/*
- * These enum values are used in iflib_needs_restart to indicate to iflib
- * functions whether or not the interface needs restarting when certain events
- * happen.
- */
-enum iflib_restart_event {
-	IFLIB_RESTART_VLAN_CONFIG,
-};
 
 /*
  * field accessors

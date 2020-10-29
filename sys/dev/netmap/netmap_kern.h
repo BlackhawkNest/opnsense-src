@@ -76,6 +76,7 @@
 #define WITH_PIPES
 #define WITH_MONITOR
 #define WITH_GENERIC
+#define WITH_PTNETMAP	/* ptnetmap guest support */
 #define WITH_EXTMEM
 #define WITH_NMNULL
 #endif
@@ -1351,24 +1352,6 @@ static inline int
 nm_native_on(struct netmap_adapter *na)
 {
 	return nm_netmap_on(na) && (na->na_flags & NAF_NATIVE);
-}
-
-static inline struct netmap_kring *
-netmap_kring_on(struct netmap_adapter *na, u_int q, enum txrx t)
-{
-	struct netmap_kring *kring = NULL;
-
-	if (!nm_native_on(na))
-		return NULL;
-
-	if (t == NR_RX && q < na->num_rx_rings)
-		kring = na->rx_rings[q];
-	else if (t == NR_TX && q < na->num_tx_rings)
-		kring = na->tx_rings[q];
-	else
-		return NULL;
-
-	return (kring->nr_mode == NKR_NETMAP_ON) ? kring : NULL;
 }
 
 static inline int
