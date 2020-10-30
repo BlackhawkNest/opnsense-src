@@ -231,13 +231,11 @@ int Kernel_DeviceIoControl(_VBUS_ARG
 
 			pArray = ID_TO_VDEV(idArray);
 
-			if((idArray == 0) || check_VDevice_valid(pArray)) {
+			if((idArray == 0) || check_VDevice_valid(pArray))	
 		       	return -1;
-			}
 		
-        	if(!mIsArray(pArray)) {
-			return -1;
-		}
+        	if(!mIsArray(pArray))
+				return -1;
 
 			_vbus_p=pArray->pVBus;
 			pAdapter = (IAL_ADAPTER_T *)_vbus_p->OsExt;

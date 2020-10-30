@@ -116,9 +116,9 @@ VNET_DEFINE(int, udp_cksum) = 1;
 SYSCTL_INT(_net_inet_udp, UDPCTL_CHECKSUM, checksum, CTLFLAG_VNET | CTLFLAG_RW,
     &VNET_NAME(udp_cksum), 0, "compute udp checksum");
 
-int	udp_log_in_vain = 0;
-SYSCTL_INT(_net_inet_udp, OID_AUTO, log_in_vain, CTLFLAG_RW,
-    &udp_log_in_vain, 0, "Log all incoming UDP packets");
+VNET_DEFINE(int, udp_log_in_vain) = 0;
+SYSCTL_INT(_net_inet_udp, OID_AUTO, log_in_vain, CTLFLAG_VNET | CTLFLAG_RW,
+    &VNET_NAME(udp_log_in_vain), 0, "Log all incoming UDP packets");
 
 VNET_DEFINE(int, udp_blackhole) = 0;
 SYSCTL_INT(_net_inet_udp, OID_AUTO, blackhole, CTLFLAG_VNET | CTLFLAG_RW,
@@ -162,7 +162,7 @@ VNET_PCPUSTAT_SYSUNINIT(udpstat);
 #ifdef INET
 static void	udp_detach(struct socket *so);
 static int	udp_output(struct inpcb *, struct mbuf *, struct sockaddr *,
-		    struct mbuf *, struct thread *);
+		    struct mbuf *, struct thread *, int);
 #endif
 
 static void
@@ -398,7 +398,7 @@ udp_input(struct mbuf **mp, int *offp, int proto)
 	struct ip save_ip;
 	struct sockaddr_in udp_in[2];
 	struct mbuf *m;
-	struct sockaddr_in next_hop;
+	struct m_tag *fwd_tag;
 	struct epoch_tracker et;
 	int cscov_partial, iphlen;
 
@@ -421,14 +421,13 @@ udp_input(struct mbuf **mp, int *offp, int proto)
 	/*
 	 * Get IP and UDP header together in first mbuf.
 	 */
-	ip = mtod(m, struct ip *);
 	if (m->m_len < iphlen + sizeof(struct udphdr)) {
 		if ((m = m_pullup(m, iphlen + sizeof(struct udphdr))) == NULL) {
 			UDPSTAT_INC(udps_hdrops);
 			return (IPPROTO_DONE);
 		}
-		ip = mtod(m, struct ip *);
 	}
+	ip = mtod(m, struct ip *);
 	uh = (struct udphdr *)((caddr_t)ip + iphlen);
 	cscov_partial = (proto == IPPROTO_UDPLITE) ? 1 : 0;
 
@@ -655,9 +654,14 @@ udp_input(struct mbuf **mp, int *offp, int proto)
 	 */
 
 	/*
-	 * Grab info from IP forward tag prepended to the chain.
+	 * Grab info from PACKET_TAG_IPFORWARD tag prepended to the chain.
 	 */
-	if (IP_HAS_NEXTHOP(m) && !ip_get_fwdtag(m, &next_hop, NULL)) {
+	if ((m->m_flags & M_IP_NEXTHOP) &&
+	    (fwd_tag = m_tag_find(m, PACKET_TAG_IPFORWARD, NULL)) != NULL) {
+		struct sockaddr_in *next_hop;
+
+		next_hop = (struct sockaddr_in *)(fwd_tag + 1);
+
 		/*
 		 * Transparently forwarded. Pretend to be the destination.
 		 * Already got one like this?
@@ -671,19 +675,20 @@ udp_input(struct mbuf **mp, int *offp, int proto)
 			 * any hardware-generated hash is ignored.
 			 */
 			inp = in_pcblookup(pcbinfo, ip->ip_src,
-			    uh->uh_sport, next_hop.sin_addr,
-			    next_hop.sin_port ? htons(next_hop.sin_port) :
+			    uh->uh_sport, next_hop->sin_addr,
+			    next_hop->sin_port ? htons(next_hop->sin_port) :
 			    uh->uh_dport, INPLOOKUP_WILDCARD |
 			    INPLOOKUP_RLOCKPCB, ifp);
 		}
 		/* Remove the tag from the packet. We don't need it anymore. */
-		ip_flush_fwdtag(m);
+		m_tag_delete(m, fwd_tag);
+		m->m_flags &= ~M_IP_NEXTHOP;
 	} else
 		inp = in_pcblookup_mbuf(pcbinfo, ip->ip_src, uh->uh_sport,
 		    ip->ip_dst, uh->uh_dport, INPLOOKUP_WILDCARD |
 		    INPLOOKUP_RLOCKPCB, ifp, m);
 	if (inp == NULL) {
-		if (udp_log_in_vain) {
+		if (V_udp_log_in_vain) {
 			char src[INET_ADDRSTRLEN];
 			char dst[INET_ADDRSTRLEN];
 
@@ -1109,13 +1114,69 @@ udp_ctloutput(struct socket *so, struct sockopt *sopt)
 	return (error);
 }
 
+#ifdef INET6
+/* The logic here is derived from ip6_setpktopt(). See comments there. */
+static int
+udp_v4mapped_pktinfo(struct cmsghdr *cm, struct sockaddr_in * src,
+    struct inpcb *inp, int flags)
+{
+	struct ifnet *ifp;
+	struct in6_pktinfo *pktinfo;
+	struct in_addr ia;
+
+	if ((flags & PRUS_IPV6) == 0)
+		return (0);
+
+	if (cm->cmsg_level != IPPROTO_IPV6)
+		return (0);
+
+	if  (cm->cmsg_type != IPV6_2292PKTINFO &&
+	    cm->cmsg_type != IPV6_PKTINFO)
+		return (0);
+
+	if (cm->cmsg_len !=
+	    CMSG_LEN(sizeof(struct in6_pktinfo)))
+		return (EINVAL);
+
+	pktinfo = (struct in6_pktinfo *)CMSG_DATA(cm);
+	if (!IN6_IS_ADDR_V4MAPPED(&pktinfo->ipi6_addr) &&
+	    !IN6_IS_ADDR_UNSPECIFIED(&pktinfo->ipi6_addr))
+		return (EINVAL);
+
+	/* Validate the interface index if specified. */
+	if (pktinfo->ipi6_ifindex > V_if_index)
+		return (ENXIO);
+
+	ifp = NULL;
+	if (pktinfo->ipi6_ifindex) {
+		ifp = ifnet_byindex(pktinfo->ipi6_ifindex);
+		if (ifp == NULL)
+			return (ENXIO);
+	}
+	if (ifp != NULL && !IN6_IS_ADDR_UNSPECIFIED(&pktinfo->ipi6_addr)) {
+
+		ia.s_addr = pktinfo->ipi6_addr.s6_addr32[3];
+		if (in_ifhasaddr(ifp, ia) == 0)
+			return (EADDRNOTAVAIL);
+	}
+
+	bzero(src, sizeof(*src));
+	src->sin_family = AF_INET;
+	src->sin_len = sizeof(*src);
+	src->sin_port = inp->inp_lport;
+	src->sin_addr.s_addr = pktinfo->ipi6_addr.s6_addr32[3];
+
+	return (0);
+}
+#endif
+
 #ifdef INET
 #define	UH_WLOCKED	2
 #define	UH_RLOCKED	1
 #define	UH_UNLOCKED	0
 static int
 udp_output(struct inpcb *inp, struct mbuf *m, struct sockaddr *addr,
-    struct mbuf *control, struct thread *td)
+    struct mbuf *control, struct thread *td, int flags)
 {
 	struct udpiphdr *ui;
 	int len = m->m_pkthdr.len;
@@ -1196,6 +1257,11 @@ retry:
 				error = EINVAL;
 				break;
 			}
+#ifdef INET6
+			error = udp_v4mapped_pktinfo(cm, &src, inp, flags);
+			if (error != 0)
+				break;
+#endif
 			if (cm->cmsg_level != IPPROTO_IP)
 				continue;
 
@@ -1811,7 +1877,7 @@ udp_send(struct socket *so, int flags, struct mbuf *m, struct sockaddr *addr,
 
 	inp = sotoinpcb(so);
 	KASSERT(inp != NULL, ("udp_send: inp == NULL"));
-	return (udp_output(inp, m, addr, control, td));
+	return (udp_output(inp, m, addr, control, td, flags));
 }
 #endif /* INET */
 

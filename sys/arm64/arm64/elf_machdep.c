@@ -58,6 +58,8 @@ __FBSDID("$FreeBSD$");
 
 #include "linker_if.h"
 
+u_long elf_hwcap;
+
 static struct sysentvec elf64_freebsd_sysvec = {
 	.sv_size	= SYS_MAXSYSCALL,
 	.sv_table	= sysent,
@@ -91,6 +93,7 @@ static struct sysentvec elf64_freebsd_sysvec = {
 	.sv_schedtail	= NULL,
 	.sv_thread_detach = NULL,
 	.sv_trap	= NULL,
+	.sv_hwcap	= &elf_hwcap,
 	.sv_pax_aslr_init = pax_aslr_init_vmspace,
 };
 INIT_SYSENTVEC(elf64_sysvec, &elf64_freebsd_sysvec);
@@ -110,21 +113,6 @@ static Elf64_Brandinfo freebsd_brand_info = {
 SYSINIT(elf64, SI_SUB_EXEC, SI_ORDER_FIRST,
     (sysinit_cfunc_t)elf64_insert_brand_entry, &freebsd_brand_info);
 
-static Elf64_Brandinfo freebsd_brand_oinfo = {
-	.brand		= ELFOSABI_FREEBSD,
-	.machine	= EM_AARCH64,
-	.compat_3_brand	= "FreeBSD",
-	.emul_path	= NULL,
-	.interp_path	= "/usr/libexec/ld-elf.so.1",
-	.sysvec		= &elf64_freebsd_sysvec,
-	.interp_newpath	= NULL,
-	.brand_note	= &elf64_freebsd_brandnote,
-	.flags		= BI_CAN_EXEC_DYN | BI_BRAND_NOTE
-};
-
-SYSINIT(oelf64, SI_SUB_EXEC, SI_ORDER_ANY,
-    (sysinit_cfunc_t)elf64_insert_brand_entry, &freebsd_brand_oinfo);
-
 void
 elf64_dump_thread(struct thread *td __unused, void *dst __unused,
     size_t *off __unused)
@@ -139,6 +127,23 @@ elf_is_ifunc_reloc(Elf_Size r_info __unused)
 	return (ELF_R_TYPE(r_info) == R_AARCH64_IRELATIVE);
 }
 
+static int
+reloc_instr_imm(Elf32_Addr *where, Elf_Addr val, u_int msb, u_int lsb)
+{
+
+	/* Check bounds: upper bits must be all ones or all zeros. */
+	if ((uint64_t)((int64_t)val >> (msb + 1)) + 1 > 1)
+		return (-1);
+	val >>= lsb;
+	val &= (1 << (msb - lsb + 1)) - 1;
+	*where |= (Elf32_Addr)val;
+	return (0);
+}
+
+/*
+ * Process a relocation.  Support for some static relocations is required
+ * in order for the -zifunc-noplt optimization to work.
+ */
 static int
 elf_reloc_internal(linker_file_t lf, Elf_Addr relocbase, const void *data,
     int type, int local, elf_lookup_fn lookup)
@@ -174,9 +179,32 @@ elf_reloc_internal(linker_file_t lf, Elf_Addr relocbase, const void *data,
 		return (0);
 	}
 
+	error = 0;
 	switch (rtype) {
 	case R_AARCH64_NONE:
 	case R_AARCH64_RELATIVE:
+		break;
+	case R_AARCH64_TSTBR14:
+		error = lookup(lf, symidx, 1, &addr);
+		if (error != 0)
+			return (-1);
+		error = reloc_instr_imm((Elf32_Addr *)where,
+		    addr + addend - (Elf_Addr)where, 15, 2);
+		break;
+	case R_AARCH64_CONDBR19:
+		error = lookup(lf, symidx, 1, &addr);
+		if (error != 0)
+			return (-1);
+		error = reloc_instr_imm((Elf32_Addr *)where,
+		    addr + addend - (Elf_Addr)where, 20, 2);
+		break;
+	case R_AARCH64_JUMP26:
+	case R_AARCH64_CALL26:
+		error = lookup(lf, symidx, 1, &addr);
+		if (error != 0)
+			return (-1);
+		error = reloc_instr_imm((Elf32_Addr *)where,
+		    addr + addend - (Elf_Addr)where, 27, 2);
 		break;
 	case R_AARCH64_ABS64:
 	case R_AARCH64_GLOB_DAT:
@@ -196,7 +224,7 @@ elf_reloc_internal(linker_file_t lf, Elf_Addr relocbase, const void *data,
 		printf("kldload: unexpected relocation type %d\n", rtype);
 		return (-1);
 	}
-	return (0);
+	return (error);
 }
 
 int

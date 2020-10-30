@@ -84,7 +84,7 @@ __FBSDID("$FreeBSD$");
 #include <netinet/udp.h>
 #include <netinet/udp_var.h>
 
-#ifdef SCTP
+#if defined(SCTP) || defined(SCTP_SUPPORT)
 #include <netinet/sctp.h>
 #include <netinet/sctp_crc32.h>
 #endif
@@ -108,9 +108,10 @@ extern int in_mcast_loop;
 extern	struct protosw inetsw[];
 
 static inline int
-ip_output_pfil(struct mbuf **mp, struct ifnet **ifp, struct inpcb *inp,
+ip_output_pfil(struct mbuf **mp, struct ifnet *ifp, struct inpcb *inp,
     struct sockaddr_in *dst, int *fibnum, int *error)
 {
+	struct m_tag *fwd_tag = NULL;
 	struct mbuf *m;
 	struct in_addr odst;
 	struct ip *ip;
@@ -120,7 +121,7 @@ ip_output_pfil(struct mbuf **mp, struct ifnet **ifp, struct inpcb *inp,
 
 	/* Run through list of hooks for output packets. */
 	odst.s_addr = ip->ip_dst.s_addr;
-	*error = pfil_run_hooks(&V_inet_pfil_hook, mp, *ifp, PFIL_OUT, 0, inp);
+	*error = pfil_run_hooks(&V_inet_pfil_hook, mp, ifp, PFIL_OUT, 0, inp);
 	m = *mp;
 	if ((*error) != 0 || m == NULL)
 		return 1; /* Finished */
@@ -142,7 +143,7 @@ ip_output_pfil(struct mbuf **mp, struct ifnet **ifp, struct inpcb *inp,
 			}
 			m->m_pkthdr.csum_flags |=
 				CSUM_IP_CHECKED | CSUM_IP_VALID;
-#ifdef SCTP
+#if defined(SCTP) || defined(SCTP_SUPPORT)
 			if (m->m_pkthdr.csum_flags & CSUM_SCTP)
 				m->m_pkthdr.csum_flags |= CSUM_SCTP_VALID;
 #endif
@@ -173,7 +174,7 @@ ip_output_pfil(struct mbuf **mp, struct ifnet **ifp, struct inpcb *inp,
 				CSUM_DATA_VALID | CSUM_PSEUDO_HDR;
 			m->m_pkthdr.csum_data = 0xffff;
 		}
-#ifdef SCTP
+#if defined(SCTP) || defined(SCTP_SUPPORT)
 		if (m->m_pkthdr.csum_flags & CSUM_SCTP)
 			m->m_pkthdr.csum_flags |= CSUM_SCTP_VALID;
 #endif
@@ -184,9 +185,12 @@ ip_output_pfil(struct mbuf **mp, struct ifnet **ifp, struct inpcb *inp,
 		return 1; /* Finished */
 	}
 	/* Or forward to some other address? */
-	if (IP_HAS_NEXTHOP(m) && !ip_get_fwdtag(m, dst, ifp)) {
+	if ((m->m_flags & M_IP_NEXTHOP) &&
+	    ((fwd_tag = m_tag_find(m, PACKET_TAG_IPFORWARD, NULL)) != NULL)) {
+		bcopy((fwd_tag+1), dst, sizeof(struct sockaddr_in));
 		m->m_flags |= M_SKIP_FIREWALL;
-		ip_flush_fwdtag(m);
+		m->m_flags &= ~M_IP_NEXTHOP;
+		m_tag_delete(m, fwd_tag);
 
 		return -1; /* Reloop for CHANGE of dst */
 	}
@@ -396,7 +400,6 @@ again:
 			isbroadcast = 0;
 	}
 
-haveroute:
 	/*
 	 * Calculate MTU.  If we have a route that is up, use that,
 	 * otherwise use the interface's MTU.
@@ -565,8 +568,7 @@ sendit:
 
 	/* Jump over all PFIL processing if hooks are not active. */
 	if (PFIL_HOOKED(&V_inet_pfil_hook)) {
-		struct ifnet *same = ifp;
-		switch (ip_output_pfil(&m, &ifp, inp, dst, &fibnum, &error)) {
+		switch (ip_output_pfil(&m, ifp, inp, dst, &fibnum, &error)) {
 		case 1: /* Finished */
 			goto done;
 
@@ -581,9 +583,6 @@ sendit:
 			rte = NULL;
 			gw = dst;
 			ip = mtod(m, struct ip *);
-			if (same != ifp) {
-				goto haveroute;
-			}
 			goto again;
 
 		}
@@ -604,7 +603,7 @@ sendit:
 		in_delayed_cksum(m);
 		m->m_pkthdr.csum_flags &= ~CSUM_DELAY_DATA;
 	}
-#ifdef SCTP
+#if defined(SCTP) || defined(SCTP_SUPPORT)
 	if (m->m_pkthdr.csum_flags & CSUM_SCTP & ~ifp->if_hwassist) {
 		sctp_delayed_cksum(m, (uint32_t)(ip->ip_hl << 2));
 		m->m_pkthdr.csum_flags &= ~CSUM_SCTP;
@@ -787,7 +786,7 @@ ip_fragment(struct ip *ip, struct mbuf **m_frag, int mtu,
 		in_delayed_cksum(m0);
 		m0->m_pkthdr.csum_flags &= ~CSUM_DELAY_DATA;
 	}
-#ifdef SCTP
+#if defined(SCTP) || defined(SCTP_SUPPORT)
 	if (m0->m_pkthdr.csum_flags & CSUM_SCTP) {
 		sctp_delayed_cksum(m0, hlen);
 		m0->m_pkthdr.csum_flags &= ~CSUM_SCTP;
@@ -1462,94 +1461,5 @@ ip_mloopback(struct ifnet *ifp, const struct mbuf *m, int hlen)
 		ip->ip_sum = 0;
 		ip->ip_sum = in_cksum(copym, hlen);
 		if_simloop(ifp, copym, AF_INET, 0);
-	}
-}
-
-struct ip_fwdtag {
-	struct sockaddr_in dst;
-	u_short if_index;
-};
-
-int
-ip_set_fwdtag(struct mbuf *m, struct sockaddr_in *dst, struct ifnet *ifp)
-{
-	struct ip_fwdtag *fwd_info;
-	struct m_tag *fwd_tag;
-
-	KASSERT(dst != NULL, ("%s: !dst", __func__));
-	KASSERT(dst->sin_family == AF_INET, ("%s: !AF_INET", __func__));
-
-	fwd_tag = m_tag_find(m, PACKET_TAG_IPFORWARD, NULL);
-	if (fwd_tag != NULL) {
-		KASSERT(((struct ip_fwdtag *)(fwd_tag+1))->dst.sin_family ==
-		    AF_INET, ("%s: !AF_INET", __func__));
-
-		m_tag_unlink(m, fwd_tag);
-	} else {
-		fwd_tag = m_tag_get(PACKET_TAG_IPFORWARD, sizeof(*fwd_info),
-		    M_NOWAIT);
-		if (fwd_tag == NULL) {
-			return (ENOBUFS);
-		}
-	}
-
-	fwd_info = (struct ip_fwdtag *)(fwd_tag+1);
-
-	bcopy(dst, &fwd_info->dst, sizeof(fwd_info->dst));
-	fwd_info->if_index = ifp ? ifp->if_index : 0;
-	m->m_flags |= M_IP_NEXTHOP;
-
-	if (in_localip(fwd_info->dst.sin_addr))
-		m->m_flags |= M_FASTFWD_OURS;
-	else
-		m->m_flags &= ~M_FASTFWD_OURS;
-
-	m_tag_prepend(m, fwd_tag);
-
-	return (0);
-}
-
-int
-ip_get_fwdtag(struct mbuf *m, struct sockaddr_in *dst, struct ifnet **ifp)
-{
-	struct ip_fwdtag *fwd_info;
-	struct m_tag *fwd_tag;
-
-	fwd_tag = m_tag_find(m, PACKET_TAG_IPFORWARD, NULL);
-	if (fwd_tag == NULL) {
-		return (ENOENT);
-	}
-
-	fwd_info = (struct ip_fwdtag *)(fwd_tag+1);
-
-	KASSERT(((struct sockaddr *)&fwd_info->dst)->sa_family == AF_INET,
-	    ("%s: !AF_INET", __func__));
-
-	if (dst != NULL) {
-		bcopy(&fwd_info->dst, dst, sizeof(*dst));
-	}
-
-	if (ifp != NULL && fwd_info->if_index != 0) {
-		struct ifnet *nifp = ifnet_byindex(fwd_info->if_index);
-		if (nifp != NULL) {
-			*ifp = nifp;
-		}
-	}
-
-	return (0);
-}
-
-void
-ip_flush_fwdtag(struct mbuf *m)
-{
-	struct m_tag *fwd_tag;
-
-	fwd_tag = m_tag_find(m, PACKET_TAG_IPFORWARD, NULL);
-	if (fwd_tag != NULL) {
-		KASSERT(((struct sockaddr *)(fwd_tag+1))->sa_family ==
-		    AF_INET, ("%s: !AF_INET", __func__));
-
-		m->m_flags &= ~(M_IP_NEXTHOP | M_FASTFWD_OURS);
-		m_tag_delete(m, fwd_tag);
 	}
 }

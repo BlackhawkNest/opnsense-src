@@ -265,9 +265,8 @@ emu_dspmixer_uninit(struct snd_mixer *m)
 	sc = mix_getdevinfo(m);
 	if (sc->sm != NULL) {
 		err = mixer_delete(sc->sm);
-		if (err) {
+		if (err)
 			return (err);
-		}
 		sc->sm = NULL;
 	}
 	return (0);

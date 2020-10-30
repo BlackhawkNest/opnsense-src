@@ -530,7 +530,7 @@ bwn_phy_lp_rf_onoff(struct bwn_mac *mac, int on)
 	if (on) {
 		BWN_PHY_MASK(mac, BWN_PHY_RF_OVERRIDE_0, 0xe0ff);
 		BWN_PHY_MASK(mac, BWN_PHY_RF_OVERRIDE_2,
-		    ((mac->mac_phy.rev >= 2) ? 0xf7f7 : 0xffe7));
+		    (mac->mac_phy.rev >= 2) ? 0xf7f7 : 0xffe7);
 		return;
 	}
 

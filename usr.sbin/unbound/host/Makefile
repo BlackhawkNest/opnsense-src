@@ -1,13 +1,12 @@
 # Vendor sources and generated files
-LDNSDIR=$	${SRCTOP}/contrib/ldns
-UNBOUNDDIR=	${SRCTOP}/contrib/unbound
+LDNSDIR= ${.CURDIR}/../../../contrib/ldns
+UNBOUNDDIR= ${.CURDIR}/../../../contrib/unbound
 
 .PATH: ${UNBOUNDDIR} ${UNBOUNDDIR}/smallapp ${UNBOUNDDIR}/doc
 
 PROG=	unbound-host
 SRCS=	unbound-host.c
-CFLAGS+=	-I${UNBOUNDDIR} -I${LDNSDIR}
-CFLAGS+=	-I${.CURDIR:H} -I${.CURDIR}
+CFLAGS+=	-I${UNBOUNDDIR} -I${LDNSDIR} -I${SRCTOP}/usr.sbin/unbound
 LIBADD=	unbound crypto ssl pthread
 MAN=	unbound-host.1
 

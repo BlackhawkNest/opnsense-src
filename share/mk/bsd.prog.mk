@@ -34,13 +34,21 @@ PROG=	${PROG_CXX}
 MK_DEBUG_FILES=	no
 .endif
 
-.if ${MK_RETPOLINE} != "no"
+# ELF hardening knobs
+.if ${MK_BIND_NOW} != "no"
+LDFLAGS+= -Wl,-znow
+.endif
+.if defined(MK_RETPOLINE) && ${MK_RETPOLINE} != "no"
 CFLAGS+= -mretpoline
 CXXFLAGS+= -mretpoline
 # retpolineplt is broken with static linking (PR 233336)
 .if !defined(NO_SHARED) || ${NO_SHARED} == "no" || ${NO_SHARED} == "NO"
 LDFLAGS+= -Wl,-zretpolineplt
 .endif
+.endif
+
+.if ${MACHINE_CPUARCH} == "riscv" && ${LINKER_FEATURES:Mriscv-relaxations} == ""
+CFLAGS += -mno-relax
 .endif
 
 .if defined(CRUNCH_CFLAGS)

@@ -754,17 +754,17 @@ ipfw_send_pkt(struct mbuf *replyto, struct ipfw_flow_id *id, u_int32_t seq,
  * ipv6 specific rules here...
  */
 static __inline int
-icmp6type_match (int type, ipfw_insn_u32 *cmd)
+icmp6type_match(int type, ipfw_insn_u32 *cmd)
 {
 	return (type <= ICMP6_MAXTYPE && (cmd->d[type/32] & (1<<(type%32)) ) );
 }
 
 static int
-flow6id_match( int curr_flow, ipfw_insn_u32 *cmd )
+flow6id_match(int curr_flow, ipfw_insn_u32 *cmd)
 {
 	int i;
-	for (i=0; i <= cmd->o.arg1; ++i )
-		if (curr_flow == cmd->d[i] )
+	for (i=0; i <= cmd->o.arg1; ++i)
+		if (curr_flow == cmd->d[i])
 			return 1;
 	return 0;
 }
@@ -936,7 +936,7 @@ send_reject6(struct ip_fw_args *args, int code, u_int hlen, struct ip6_hdr *ip6)
 				 * If the packet contains an ABORT chunk, don't
 				 * reply.
 				 * XXX: We should search through all chunks,
-				 *      but don't do to avoid attacks.
+				 * but do not do that to avoid attacks.
 				 */
 				v_tag = 0;
 				break;
@@ -1054,7 +1054,7 @@ send_reject(struct ip_fw_args *args, int code, int iplen, struct ip *ip)
 				 * If the packet contains an ABORT chunk, don't
 				 * reply.
 				 * XXX: We should search through all chunks,
-				 * but don't do to avoid attacks.
+				 * but do not do that to avoid attacks.
 				 */
 				v_tag = 0;
 				break;
@@ -2068,6 +2068,8 @@ do {						\
 					uint32_t v = 0;
 					match = ipfw_lookup_table(chain,
 					    cmd->arg1, 0, &args->f_id, &v);
+					if (!match)
+						break;
 					if (cmdlen == F_INSN_SIZE(ipfw_insn_u32))
 						match = ((ipfw_insn_u32 *)cmd)->d[0] ==
 						    TARG_VAL(chain, v, tag);
@@ -2185,7 +2187,7 @@ do {						\
 				break;
 
 			case O_IPVER:
-				match = (is_ipv4 &&
+				match = ((is_ipv4 || is_ipv6) &&
 				    cmd->arg1 == ip->ip_v);
 				break;
 

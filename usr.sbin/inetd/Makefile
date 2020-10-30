@@ -9,7 +9,6 @@ MAN=	inetd.8
 MLINKS=	inetd.8 inetd.conf.5
 SRCS=	inetd.c builtins.c
 
-WARNS?=	3
 CFLAGS+= -DLOGIN_CAP
 #CFLAGS+= -DSANITY_CHECK
 
@@ -29,5 +28,6 @@ LIBADD+=	wrap
 CFLAGS+= -DIPSEC
 LIBADD+=	ipsec
 .endif
+
 
 .include <bsd.prog.mk>

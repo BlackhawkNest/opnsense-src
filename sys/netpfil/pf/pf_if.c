@@ -463,13 +463,27 @@ static void
 pfi_kif_update(struct pfi_kif *kif)
 {
 	struct ifg_list		*ifgl;
+	struct ifg_member	*ifgm;
 	struct pfi_dynaddr	*p;
+	struct pfi_kif		*tmpkif;
 
 	PF_RULES_WASSERT();
 
 	/* update all dynaddr */
 	TAILQ_FOREACH(p, &kif->pfik_dynaddrs, entry)
 		pfi_dynaddr_update(p);
+
+	/* Apply group flags to new members. */
+	if (kif->pfik_group != NULL) {
+		CK_STAILQ_FOREACH(ifgm, &kif->pfik_group->ifg_members,
+		    ifgm_next) {
+			tmpkif = (struct pfi_kif *)ifgm->ifgm_ifp->if_pf_kif;
+			if (tmpkif == NULL)
+				continue;
+
+			tmpkif->pfik_flags |= kif->pfik_flags;
+		}
+	}
 
 	/* again for all groups kif is member of */
 	if (kif->pfik_ifp != NULL) {
@@ -557,8 +571,7 @@ pfi_instance_add(struct ifnet *ifp, int net, int flags)
 		if ((flags & PFI_AFLAG_PEER) &&
 		    !(ifp->if_flags & IFF_POINTOPOINT))
 			continue;
-		if ((flags & (PFI_AFLAG_NETWORK | PFI_AFLAG_NOALIAS)) &&
-		    af == AF_INET6 &&
+		if ((flags & PFI_AFLAG_NETWORK) && af == AF_INET6 &&
 		    IN6_IS_ADDR_LINKLOCAL(
 		    &((struct sockaddr_in6 *)ia->ifa_addr)->sin6_addr))
 			continue;

@@ -37,6 +37,7 @@
 #ifndef _FS_TMPFS_TMPFS_H_
 #define _FS_TMPFS_TMPFS_H_
 
+#include <sys/cdefs.h>
 #include <sys/queue.h>
 #include <sys/tree.h>
 
@@ -128,6 +129,28 @@ RB_HEAD(tmpfs_dir, tmpfs_dirent);
 #define	TMPFS_DIRCOOKIE_DUP_MIN		TMPFS_DIRCOOKIE_DUP
 #define	TMPFS_DIRCOOKIE_DUP_MAX		\
 	(TMPFS_DIRCOOKIE_DUP | TMPFS_DIRCOOKIE_MASK)
+
+/*
+ * Extended attribute support.
+ *
+ * A good portion of this support is based upon the UFS
+ * implementation. Stand on the shoulders of giants. This
+ * implementation aims to only provide support for applying extended
+ * attributes to files (VREG).
+ */
+
+#define	TMPFS_EXTATTR_MAXNAME		33 /* Includes terminating NUL */
+#define	TMPFS_EXTATTR_MAXVALUESIZE	64
+
+struct tmpfs_extattr_list_entry {
+	LIST_ENTRY(tmpfs_extattr_list_entry)	 tele_entries;
+	int					 tele_attrnamespace;
+	char					 tele_attrname[TMPFS_EXTATTR_MAXNAME];
+	void					*tele_value;
+	size_t					 tele_value_size;
+};
+
+LIST_HEAD(tmpfs_extattr_list_head, tmpfs_extattr_list_entry);
 
 /*
  * Internal representation of a tmpfs file system node.
@@ -286,6 +309,12 @@ struct tmpfs_node {
 			 * a position within the file is accessed.
 			 */
 			vm_object_t		tn_aobj;	/* (c) */
+
+			/*
+			 * The extended attributes list, which may be
+			 * empty.
+			 */
+			struct tmpfs_extattr_list_head	 tn_extattr_list; /* (i) */
 		} tn_reg;
 	} tn_spec;	/* (v) */
 };
@@ -378,10 +407,6 @@ struct tmpfs_mount {
 	/* All node lock to protect the node list and tmp_pages_used. */
 	struct mtx		tm_allnode_lock;
 
-	/* Zones used to store file system meta data, per tmpfs mount. */
-	uma_zone_t		tm_dirent_pool;
-	uma_zone_t		tm_node_pool;
-
 	/* Read-only status. */
 	bool			tm_ronly;
 	/* Do not use namecache. */
@@ -395,12 +420,12 @@ struct tmpfs_mount {
  * This structure maps a file identifier to a tmpfs node.  Used by the
  * NFS code.
  */
-struct tmpfs_fid {
-	uint16_t		tf_len;
-	uint16_t		tf_pad;
-	ino_t			tf_id;
-	unsigned long		tf_gen;
+struct tmpfs_fid_data {
+	ino_t			tfd_id;
+	unsigned long		tfd_gen;
 };
+_Static_assert(sizeof(struct tmpfs_fid_data) <= MAXFIDSZ,
+    "(struct tmpfs_fid_data) is larger than (struct fid).fid_data");
 
 struct tmpfs_dir_cursor {
 	struct tmpfs_dirent	*tdc_current;
@@ -491,10 +516,9 @@ struct tmpfs_dirent *tmpfs_dir_next(struct tmpfs_node *dnode,
 #define TMPFS_PAGES_MINRESERVED		(4 * 1024 * 1024 / PAGE_SIZE)
 
 size_t tmpfs_mem_avail(void);
-
 size_t tmpfs_pages_used(struct tmpfs_mount *tmp);
-
-#endif
+void tmpfs_subr_init(void);
+void tmpfs_subr_uninit(void);
 
 /*
  * Macros/functions to convert from generic data structures to tmpfs
@@ -537,5 +561,6 @@ tmpfs_use_nc(struct vnode *vp)
 
 	return (!(VFS_TO_TMPFS(vp->v_mount)->tm_nonc));
 }
+#endif /* _KERNEL */
 
 #endif /* _FS_TMPFS_TMPFS_H_ */

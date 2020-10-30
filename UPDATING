@@ -1,4 +1,4 @@
- Updating Information for FreeBSD current users.
+ Updating Information for FreeBSD stable/12 users.
 
 This file is maintained and copyrighted by M. Warner Losh <imp@freebsd.org>.
 See end of file for further details.  For commonly done items, please see the
@@ -16,7 +16,10 @@ from older versions of FreeBSD, try WITHOUT_CLANG and WITH_GCC to bootstrap to
 the tip of head, and then rebuild without this option. The bootstrap process
 from older version of current across the gcc/clang cutover is a bit fragile.
 
-20200915	p10	FreeBSD-SA-20:27.ure
+20201027:
+	12.2-RELEASE.
+
+20200915:	p1	FreeBSD-SA-20:27.ure
 			FreeBSD-SA-20:28.bhyve_vmcs
 			FreeBSD-SA-20:29.bhyve_svm
 			FreeBSD-SA-20:30.ftpd
@@ -30,134 +33,90 @@ from older version of current across the gcc/clang cutover is a bit fragile.
 
         Fix ftpd privilege escalation via ftpchroot. [SA-20:30.ftpd]
 
-20200902	p9	FreeBSD-EN-20:17.linuxthread
-			FreeBSD-SA-20:25.sctp
-			FreeBSD-SA-20:26.dhclient
+20200912:
+	The make.conf(5) MALLOC_PRODUCTION variable, used for disabling and
+	enabling assertions and statistics gathering in malloc(3), has been
+	migrated to a src.conf(5) WITH/WITHOUT_MALLOC_PRODUCTION option.
 
-        Fix FreeBSD Linux ABI kernel panic. [EN-20:17.linuxthread]
+	On stable branches, WITH_MALLOC_PRODUCTION is set by default, which
+	means that malloc(3) has assertions and statistics gathering disabled,
+	for improved performance.
 
-        Fix SCTP socket use-after-free. [SA-20:25.sctp]
+	For backwards compatibility, the make.conf(5) MALLOC_PRODUCTION is still
+	honored, but it is now deprecated and undocumented.
 
-        Fix dhclient heap overflow. [SA-20:26.dhclient]
+20200909:
+	The resume code now notifies devd with the 'kernel' system
+	rather than the old 'kern' subsystem to be consistent with
+	other use. The old notification will be created as well, but
+	will be removed prior to FreeBSD 14.0.
 
-20200805	p8	FreeBSD-EN-20:16.vmx
-			FreeBSD-SA-20:21.usb_net
-			FreeBSD-SA-20:22.unbound
-			FreeBSD-SA-20:23.ipv6
+20200722:
+	Clang, llvm, lld, lldb, compiler-rt, libc++, libunwind and openmp have
+	been upgraded to 10.0.1.  Please see the 20141231 entry below for
+	information about prerequisites and upgrading, if you are not already
+	using clang 3.5.0 or higher.
 
-        Fix vmx driver packet loss and degraded performance. [EN-20:16.vmx]
+20200708:
+	read(2) of a directory fd is now rejected by default.  root may
+	re-enable it for the entire system with the
+	security.bsd.allow_read_dir sysctl(8) MIB.
 
-        Fix memory corruption in USB network device drivers. [SA-20:21.usb_net]
+	It may be advised to setup aliases for grep to default to `-d skip` if
+	commonly non-recursively grepping a list that includes directories and
+	the potential for the resulting stderr output is not tolerable.  Example
+	aliases are now installed, commented out, in /root/.cshrc.
 
-        Fix multiple vulnerabilities in sqlite3. [SA-20:22.sqlite]
+20200414:
+	Upstream DTS from Linux 5.6 was merged and they now have the SID
+	and THS (Secure ID controller and THermal Sensor) node present.
+	The DTB overlays have now been removed from the tree for the H3/H5 and
+	A64 SoCs and the aw_sid and aw_thermal driver have been updated to
+	deal with upstream DTS. If you are using those overlays you need to
+	remove them from loader.conf and update the DTBs on the FAT partition.
 
-        Fix sendmsg(2) privilege escalation. [SA-20:23.sendmsg]
+20200501:
+	Clang, llvm, lld, lldb, compiler-rt, libc++, libunwind and openmp have
+	been upgraded to 10.0.0.  Please see the 20141231 entry below for
+	information about prerequisites and upgrading, if you are not already
+	using clang 3.5.0 or higher.
 
-20200708	p7	FreeBSD-EN-20:13.bhyve
-			FreeBSD-EN-20:14.linuxkpi
-			FreeBSD-EN-20:15.mps
-			FreeBSD-SA-20:19.unbound
-			FreeBSD-SA-20:20.ipv6
+20200430:
+	The root certificates of the Mozilla CA Certificate Store have been
+	imported into the base system and can be managed with the certctl(8)
+	utility.  If you have installed the security/ca_root_nss port or package
+	with the ETCSYMLINK option (the default), be advised that there may be
+	differences between those included in the port and those included in
+	base due to differences in nss branch used as well as general update
+	frequency.  Note also that certctl(8) cannot manage certs in the
+	format used by the security/ca_root_nss port.
 
-        Fix host crash in bhyve with PCI device passthrough. [EN-20:13.bhyve]
+20200107:
+	Clang, llvm, lld, lldb, compiler-rt, libc++, libunwind and openmp have
+	been upgraded to 9.0.1.  Please see the 20141231 entry below for
+	information about prerequisites and upgrading, if you are not already
+	using clang 3.5.0 or higher.
 
-        Fix kernel panic in LinuxKPI subsystem. [EN-20:14.linuxpki]
+20191107:
+	The nctgpio and wbwd drivers have been moved to the superio bus.
+	If you have one of these drivers in a kernel configuration, then
+	you should add device superio to it.  If you use one of these drivers
+	as a module and you compile a custom set of modules, then you should
+	add superio to the set.
 
-        Fix kernel panic in mps(4) driver. [EN-20:15.mps]
+20191024:
+	The tap(4) driver has been folded into tun(4), and the module has been
+	renamed to tuntap.  You should update any kld_list="if_tap" or
+	kld_list="if_tun" entries in /etc/rc.conf, if_tap_load="YES" or
+	if_tun_load="YES" entries in /boot/loader.conf to load the if_tuntap
+	module instead, and "device tap" or "device tun" entries in kernel
+	config files to select the tuntap device instead.
 
-        Fix multiple vulnerabilities in unbound. [SA-20:19.unbound]
-
-        Fix IPv6 socket option race condition and use after free. [SA-20:20.ipv6]
-
-20200609	p6	FreeBSD-EN-20:11.ena
-			FreeBSD-EN-20:12.iflib
-			FreeBSD-SA-20:17.usb
-
-        Fix stability issues in ena(4) driver. [EN-20:11.ena]
-
-        Fix iflib watchdog timeout resetting idle queues. [EN-20:12.iflib]
-
-        Fix USB HID descriptor parsing error. [SA-20:17.usb]
-
-20200512	p5	FreeBSD-EN-20:08.tzdata
-			FreeBSD-EN-20:09.igb
-			FreeBSD-EN-20:10.build
-			FreeBSD-SA-20:12.libalias
-			FreeBSD-SA-20:13.libalias
-			FreeBSD-SA-20:15.cryptodev
-			FreeBSD-SA-20:16.cryptodev
-
-        Import tzdata 2020a. [EN-20:08.tzdata]
-
-        Fix igb interfaces failing to switch to inactive state [EN-20:09.igb]
-
-        Fix incorrect build host Clang version detection [EN-20:10.build]
-
-	Fix insufficient packet length validation in libalias [SA-20:12.libalias]
-
-	Fix memory disclosure vulnerability in libalias [SA-20:13.libalias]
-
-	Fix use after free in cryptodev module [SA-20:15.cryptodev]
-
-	Fix insufficient cryptodev MAC key length check [SA-20:16.cryptodev]
-
-20200421	p4	FreeBSD-EN-20:07.quotad
-			FreeBSD-SA-20:10.ipfw
-			FreeBSD-SA-20:11.openssl
-
-        Fix regression in rpc.rquotad with certain NFS servers [EN-20:07.quotad]
-
-        Fix ipfw invalid mbuf handling [SA-20:10.ipfw]
-
-        Fix OpenSSL remote denial of service vulnerability [SA-20:11.openssl]
-
-20200319	p3	FreeBSD-EN-20:03.sshd
-			FreeBSD-EN-20:05.mlx5en
-			FreeBSD-EN-20:06.ipv6
-			FreeBSD-SA-20:04.tcp
-			FreeBSD-SA-20:05.if_oce_ioctl
-			FreeBSD-SA-20:06.if_ixl_ioctl
-			FreeBSD-SA-20:07.epair
-			FreeBSD-SA-20:08.jail
-			FreeBSD-SA-20:09.ntp
-
-        Fix misleading log messages upon successful sshd login [EN-20:03.sshd]
-
-        Fix packet forwarding performance in mlx5en(4) driver [EN-20:05.mlx5en]
-
-        Fix incorrect checksum calculations with IPv6 extension headers [EN-20:06.ipv6]
-
-	Fix TCP IPv6 SYN cache kernel information disclosure [SA-20:04.tcp]
-
-	Fix insufficient oce(4) ioctl(2) privilege checking [SA-20:05.if_oce_ioctl]
-
-	Fix insufficient ixl(4) ioctl(2) privilege checking [SA-20:06.if_ixl_ioctl]
-
-	Fix incorrect user-controlled pointer use in epair [SA-20:07.epair]
-
-	Fix kernel memory disclosure with nested jails [SA-20:08.jail]
-
-	Fix multiple denial of service in ntpd [SA-20:09.ntp]
-
-20200128	p2	FreeBSD-EN-20:01.ssp
-			FreeBSD-SA-20:01.libfetch
-			FreeBSD-SA-20:03.thrmisc
-
-        Fix imprecise ordering of SSP canary initialization [EN-20:01.ssp]
-
-        Fix libfetch buffer overflow [SA-20:01.libfetch]
-
-        Fix kernel stack data disclosure [SA-20:03.thrmisc]
-
-20191112	p1	FreeBSD-EN-19:19.loader
-			FreeBSD-SA-19:25.mcepsc
-
-	Fix UEFI Loader Memory Fragmentation [EN-19:19.loader]
-
-	Fix Machine Check Exception on Page Size Change [SA-19:25.mcepsc]
-	
-20191104:
-	12.1-RELEASE.
+20190913:
+	ntpd no longer by default locks its pages in memory, allowing them
+	to be paged out by the kernel. Use rlimit memlock to restore
+	historic BSD behaviour. For example, add "rlimit memlock 32"
+	to ntp.conf to lock up to 32 MB of ntpd address space in memory.
 
 20190914:
 	The vfs.fusefs.sync_unmount and vfs.fusefs.init_backgrounded sysctls

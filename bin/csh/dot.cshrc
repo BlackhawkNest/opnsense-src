@@ -12,6 +12,10 @@ alias la	ls -aF
 alias lf	ls -FA
 alias ll	ls -lAF
 
+# read(2) of directories may not be desirable by default, as this will provoke
+# EISDIR errors from each directory encountered.
+# alias grep	grep -d skip
+
 # A righteous umask
 umask 22
 
@@ -19,7 +23,6 @@ set path = (/sbin /bin /usr/sbin /usr/bin /usr/local/sbin /usr/local/bin $HOME/b
 
 setenv	EDITOR	vi
 setenv	PAGER	less
-setenv	BLOCKSIZE	K
 
 if ($?prompt) then
 	# An interactive shell -- set some stuff up
@@ -38,10 +41,6 @@ if ($?prompt) then
 		bindkey "^W" backward-delete-word
 		bindkey -k up history-search-backward
 		bindkey -k down history-search-forward
-		bindkey "\e[1~" beginning-of-line
-		bindkey "\e[2~" overwrite-mode
-		bindkey "\e[3~" delete-char
-		bindkey "\e[4~" end-of-line
 	endif
 
 endif

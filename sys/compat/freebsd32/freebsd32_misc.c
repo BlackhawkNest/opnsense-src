@@ -2282,6 +2282,32 @@ freebsd32___sysctl(struct thread *td, struct freebsd32___sysctl_args *uap)
 }
 
 int
+freebsd32___sysctlbyname(struct thread *td,
+    struct freebsd32___sysctlbyname_args *uap)
+{
+	size_t oldlen, rv;
+	int error;
+	uint32_t tmp;
+
+	if (uap->oldlenp != NULL) {
+		error = fueword32(uap->oldlenp, &tmp);
+		oldlen = tmp;
+	} else {
+		error = oldlen = 0;
+	}
+	if (error != 0)
+		return (EFAULT);
+	error = kern___sysctlbyname(td, uap->name, uap->namelen, uap->old,
+	    &oldlen, uap->new, uap->newlen, &rv, SCTL_MASK32, 1);
+	if (error != 0)
+		return (error);
+	if (uap->oldlenp != NULL)
+		error = suword32(uap->oldlenp, rv);
+
+	return (error);
+}
+
+int
 freebsd32_jail(struct thread *td, struct freebsd32_jail_args *uap)
 {
 	uint32_t version;
@@ -2651,7 +2677,7 @@ freebsd32_user_clock_nanosleep(struct thread *td, clockid_t clock_id,
 {
 	struct timespec32 rmt32, rqt32;
 	struct timespec rmt, rqt;
-	int error;
+	int error, error2;
 
 	error = copyin(ua_rqtp, &rqt32, sizeof(rqt32));
 	if (error)
@@ -2660,18 +2686,13 @@ freebsd32_user_clock_nanosleep(struct thread *td, clockid_t clock_id,
 	CP(rqt32, rqt, tv_sec);
 	CP(rqt32, rqt, tv_nsec);
 
-	if (ua_rmtp != NULL && (flags & TIMER_ABSTIME) == 0 &&
-	    !useracc(ua_rmtp, sizeof(rmt32), VM_PROT_WRITE))
-		return (EFAULT);
 	error = kern_clock_nanosleep(td, clock_id, flags, &rqt, &rmt);
 	if (error == EINTR && ua_rmtp != NULL && (flags & TIMER_ABSTIME) == 0) {
-		int error2;
-
 		CP(rmt, rmt32, tv_sec);
 		CP(rmt, rmt32, tv_nsec);
 
 		error2 = copyout(&rmt32, ua_rmtp, sizeof(rmt32));
-		if (error2)
+		if (error2 != 0)
 			error = error2;
 	}
 	return (error);
@@ -3365,8 +3386,13 @@ freebsd32_procctl(struct thread *td, struct freebsd32_procctl_args *uap)
 		    uap->com, PTRIN(uap->data)));
 
 	switch (uap->com) {
+#ifndef PAX_ASLR
+	case PROC_ASLR_CTL:
+#endif
 	case PROC_SPROTECT:
+#ifndef PAX_ASLR
 	case PROC_STACKGAP_CTL:
+#endif
 	case PROC_TRACE_CTL:
 	case PROC_TRAPCAP_CTL:
 		error = copyin(PTRIN(uap->data), &flags, sizeof(flags));
@@ -3397,7 +3423,10 @@ freebsd32_procctl(struct thread *td, struct freebsd32_procctl_args *uap)
 			return (error);
 		data = &x.rk;
 		break;
+#ifndef PAX_ASLR
+	case PROC_ASLR_STATUS:
 	case PROC_STACKGAP_STATUS:
+#endif /* PAX_ASLR */
 	case PROC_TRACE_STATUS:
 	case PROC_TRAPCAP_STATUS:
 		data = &flags;
@@ -3426,7 +3455,10 @@ freebsd32_procctl(struct thread *td, struct freebsd32_procctl_args *uap)
 		if (error == 0)
 			error = error1;
 		break;
+#ifndef PAX_ASLR
+	case PROC_ASLR_STATUS:
 	case PROC_STACKGAP_STATUS:
+#endif /* PAX_ASLR */
 	case PROC_TRACE_STATUS:
 	case PROC_TRAPCAP_STATUS:
 		if (error == 0)

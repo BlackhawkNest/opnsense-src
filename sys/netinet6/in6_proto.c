@@ -71,6 +71,7 @@ __FBSDID("$FreeBSD$");
 #include "opt_ipstealth.h"
 #include "opt_sctp.h"
 #include "opt_mpath.h"
+#include "opt_pax.h"
 #include "opt_route.h"
 
 #include <sys/param.h>
@@ -373,7 +374,11 @@ VNET_DOMAIN_SET(inet6);
 #endif /* !IPV6FORWARDING */
 
 #ifndef	IPV6_SENDREDIRECTS
+#ifdef PAX_HARDENING
+#define	IPV6_SENDREDIRECTS	0
+#else
 #define	IPV6_SENDREDIRECTS	1
+#endif
 #endif
 
 VNET_DEFINE(int, ip6_forwarding) = IPV6FORWARDING;	/* act as router? */
@@ -384,17 +389,18 @@ VNET_DEFINE(int, ip6_accept_rtadv) = 0;
 VNET_DEFINE(int, ip6_no_radr) = 0;
 VNET_DEFINE(int, ip6_norbit_raif) = 0;
 VNET_DEFINE(int, ip6_rfc6204w3) = 0;
-VNET_DEFINE(int, ip6_maxfragpackets);	/* initialized in frag6.c:frag6_init() */
-int ip6_maxfrags;		/* initialized in frag6.c:frag6_init() */
-VNET_DEFINE(int, ip6_maxfragbucketsize);/* initialized in frag6.c:frag6_init() */
-VNET_DEFINE(int, ip6_maxfragsperpacket); /* initialized in frag6.c:frag6_init() */
 VNET_DEFINE(int, ip6_log_interval) = 5;
 VNET_DEFINE(int, ip6_hdrnestlimit) = 15;/* How many header options will we
 					 * process? */
 VNET_DEFINE(int, ip6_dad_count) = 1;	/* DupAddrDetectionTransmits */
 VNET_DEFINE(int, ip6_auto_flowlabel) = 1;
+#ifdef PAX_HARDENING
+VNET_DEFINE(int, ip6_use_deprecated) = 0;/* allow deprecated addr
+					 * (RFC2462 5.5.4) */
+#else
 VNET_DEFINE(int, ip6_use_deprecated) = 1;/* allow deprecated addr
 					 * (RFC2462 5.5.4) */
+#endif
 VNET_DEFINE(int, ip6_rr_prune) = 5;	/* router renumbering prefix
 					 * walk list every 5 sec. */
 VNET_DEFINE(int, ip6_mcast_pmtu) = 0;	/* enable pMTU discovery for multicast? */
@@ -417,7 +423,11 @@ VNET_DEFINE(int, pmtu_expire) = 60*10;
 VNET_DEFINE(int, pmtu_probe) = 60*2;
 
 /* ICMPV6 parameters */
+#ifdef PAX_HARDENING
+VNET_DEFINE(int, icmp6_rediraccept) = 0;/* accept and process redirects */
+#else
 VNET_DEFINE(int, icmp6_rediraccept) = 1;/* accept and process redirects */
+#endif
 VNET_DEFINE(int, icmp6_redirtimeout) = 10 * 60;	/* 10 minutes */
 VNET_DEFINE(int, icmp6errppslim) = 100;		/* 100pps */
 /* control how to respond to NI queries */
@@ -436,7 +446,7 @@ SYSCTL_NODE(_net_inet6,	IPPROTO_IPV6,	ip6,	CTLFLAG_RW, 0,	"IP6");
 SYSCTL_NODE(_net_inet6,	IPPROTO_ICMPV6,	icmp6,	CTLFLAG_RW, 0,	"ICMP6");
 SYSCTL_NODE(_net_inet6,	IPPROTO_UDP,	udp6,	CTLFLAG_RW, 0,	"UDP6");
 SYSCTL_NODE(_net_inet6,	IPPROTO_TCP,	tcp6,	CTLFLAG_RW, 0,	"TCP6");
-#ifdef SCTP
+#if defined(SCTP) || defined(SCTP_SUPPORT)
 SYSCTL_NODE(_net_inet6,	IPPROTO_SCTP,	sctp6,	CTLFLAG_RW, 0,	"SCTP6");
 #endif
 #if defined(IPSEC) || defined(IPSEC_SUPPORT)
@@ -474,20 +484,6 @@ sysctl_ip6_tempvltime(SYSCTL_HANDLER_ARGS)
 	return (0);
 }
 
-static int
-sysctl_ip6_maxfragpackets(SYSCTL_HANDLER_ARGS)
-{
-	int error, val;
-
-	val = V_ip6_maxfragpackets;
-	error = sysctl_handle_int(oidp, &val, 0, req);
-	if (error != 0 || !req->newptr)
-		return (error);
-	V_ip6_maxfragpackets = val;
-	frag6_set_bucketsize();
-	return (0);
-}
-
 SYSCTL_INT(_net_inet6_ip6, IPV6CTL_FORWARDING, forwarding,
 	CTLFLAG_VNET | CTLFLAG_RW, &VNET_NAME(ip6_forwarding), 0,
 	"Enable forwarding of IPv6 packets between interfaces");
@@ -500,12 +496,6 @@ SYSCTL_INT(_net_inet6_ip6, IPV6CTL_DEFHLIM, hlim,
 SYSCTL_VNET_PCPUSTAT(_net_inet6_ip6, IPV6CTL_STATS, stats, struct ip6stat,
 	ip6stat,
 	"IP6 statistics (struct ip6stat, netinet6/ip6_var.h)");
-SYSCTL_PROC(_net_inet6_ip6, IPV6CTL_MAXFRAGPACKETS, maxfragpackets,
-	CTLFLAG_VNET | CTLTYPE_INT | CTLFLAG_RW, NULL, 0,
-	sysctl_ip6_maxfragpackets, "I",
-	"Default maximum number of outstanding fragmented IPv6 packets. "
-	"A value of 0 means no fragmented packets will be accepted, while a "
-	"a value of -1 means no limit");
 SYSCTL_INT(_net_inet6_ip6, IPV6CTL_ACCEPT_RTADV, accept_rtadv,
 	CTLFLAG_VNET | CTLFLAG_RW, &VNET_NAME(ip6_accept_rtadv), 0,
 	"Default value of per-interface flag for accepting ICMPv6 RA messages");
@@ -575,17 +565,6 @@ SYSCTL_INT(_net_inet6_ip6, IPV6CTL_PREFER_TEMPADDR, prefer_tempaddr,
 SYSCTL_INT(_net_inet6_ip6, IPV6CTL_USE_DEFAULTZONE, use_defaultzone,
 	CTLFLAG_VNET | CTLFLAG_RW, &VNET_NAME(ip6_use_defzone), 0,
 	"Use the default scope zone when none is specified");
-SYSCTL_INT(_net_inet6_ip6, IPV6CTL_MAXFRAGS, maxfrags,
-	CTLFLAG_RW, &ip6_maxfrags, 0,
-	"Maximum allowed number of outstanding IPv6 packet fragments. "
-	"A value of 0 means no fragmented packets will be accepted, while a "
-	"a value of -1 means no limit");
-SYSCTL_INT(_net_inet6_ip6, IPV6CTL_MAXFRAGBUCKETSIZE, maxfragbucketsize,
-	CTLFLAG_VNET | CTLFLAG_RW, &VNET_NAME(ip6_maxfragbucketsize), 0,
-	"Maximum number of reassembly queues per hash bucket");
-SYSCTL_INT(_net_inet6_ip6, IPV6CTL_MAXFRAGSPERPACKET, maxfragsperpacket,
-	CTLFLAG_VNET | CTLFLAG_RW, &VNET_NAME(ip6_maxfragsperpacket), 0,
-	"Maximum allowed number of fragments per packet");
 SYSCTL_INT(_net_inet6_ip6, IPV6CTL_MCAST_PMTU, mcast_pmtu,
 	CTLFLAG_VNET | CTLFLAG_RW, &VNET_NAME(ip6_mcast_pmtu), 0,
 	"Enable path MTU discovery for multicast packets");
@@ -622,7 +601,7 @@ SYSCTL_INT(_net_inet6_icmp6, ICMPV6CTL_ND6_USELOOPBACK, nd6_useloopback,
 	"Create a loopback route when configuring an IPv6 address");
 SYSCTL_INT(_net_inet6_icmp6, ICMPV6CTL_NODEINFO, nodeinfo,
 	CTLFLAG_VNET | CTLFLAG_RW, &VNET_NAME(icmp6_nodeinfo), 0,
-	"Mask of enabled RF4620 node information query types");
+	"Mask of enabled RFC4620 node information query types");
 SYSCTL_INT(_net_inet6_icmp6, ICMPV6CTL_NODEINFO_OLDMCPREFIX,
 	nodeinfo_oldmcprefix, CTLFLAG_VNET | CTLFLAG_RW,
 	&VNET_NAME(icmp6_nodeinfo_oldmcprefix), 0,

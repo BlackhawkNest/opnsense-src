@@ -122,7 +122,8 @@ SYSCTL_INT(_debug, OID_AUTO, __elfN(legacy_coredump), CTLFLAG_RW,
 
 int __elfN(nxstack) =
 #if defined(__amd64__) || defined(__powerpc64__) /* both 64 and 32 bit */ || \
-    (defined(__arm__) && __ARM_ARCH >= 7) || defined(__aarch64__)
+    (defined(__arm__) && __ARM_ARCH >= 7) || defined(__aarch64__) || \
+    defined(__riscv)
 	1;
 #else
 	0;
@@ -130,6 +131,28 @@ int __elfN(nxstack) =
 SYSCTL_INT(__CONCAT(_kern_elf, __ELF_WORD_SIZE), OID_AUTO,
     nxstack, CTLFLAG_RW, &__elfN(nxstack), 0,
     __XSTRING(__CONCAT(ELF, __ELF_WORD_SIZE)) ": enable non-executable stack");
+
+#ifndef PAX_ASLR
+static u_long __elfN(pie_base) = ET_DYN_LOAD_ADDR;
+static int
+sysctl_pie_base(SYSCTL_HANDLER_ARGS)
+{
+	u_long val;
+	int error;
+
+	val = __elfN(pie_base);
+	error = sysctl_handle_long(oidp, &val, 0, req);
+	if (error != 0 || req->newptr == NULL)
+		return (error);
+	if ((val & PAGE_MASK) != 0)
+		return (EINVAL);
+	__elfN(pie_base) = val;
+	return (0);
+}
+SYSCTL_PROC(__CONCAT(_kern_elf, __ELF_WORD_SIZE), OID_AUTO, pie_base,
+    CTLTYPE_ULONG | CTLFLAG_MPSAFE | CTLFLAG_RW, NULL, 0,
+    sysctl_pie_base, "LU",
+    "PIE load base without randomization");
 
 SYSCTL_NODE(__CONCAT(_kern_elf, __ELF_WORD_SIZE), OID_AUTO, aslr, CTLFLAG_RW, 0,
     "");
@@ -157,6 +180,7 @@ SYSCTL_INT(ASLR_NODE_OID, OID_AUTO, stack_gap, CTLFLAG_RW,
     &__elfN(aslr_stack_gap), 0,
     __XSTRING(__CONCAT(ELF, __ELF_WORD_SIZE))
     ": maximum percentage of main stack to waste on a random gap");
+#endif /* PAX_ASLR */
 
 static Elf_Brandinfo *elf_brand_list[MAX_BRANDS];
 
@@ -748,8 +772,8 @@ __elfN(load_file)(struct proc *p, const char *file, u_long *addr,
 	imgp->proc = p;
 	imgp->attr = attr;
 
-	NDINIT(nd, LOOKUP, FOLLOW | LOCKSHARED | LOCKLEAF, UIO_SYSSPACE, file,
-	    curthread);
+	NDINIT(nd, LOOKUP, ISOPEN | FOLLOW | LOCKSHARED | LOCKLEAF,
+	    UIO_SYSSPACE, file, curthread);
 	if ((error = namei(nd)) != 0) {
 		nd->ni_vp = NULL;
 		goto fail;
@@ -816,6 +840,7 @@ fail:
 	return (error);
 }
 
+#ifndef PAX_ASLR
 static u_long
 __CONCAT(rnd_, __elfN(base))(vm_map_t map __unused, u_long minv, u_long maxv,
     u_int align)
@@ -839,6 +864,7 @@ __CONCAT(rnd_, __elfN(base))(vm_map_t map __unused, u_long minv, u_long maxv,
 	    res, maxv, minv, rbase));
 	return (res);
 }
+#endif /* PAX_ASLR */
 
 static int
 __elfN(enforce_limits)(struct image_params *imgp, const Elf_Ehdr *hdr,
@@ -1032,14 +1058,24 @@ __CONCAT(exec_, __elfN(imgact))(struct image_params *imgp)
 	const Elf_Phdr *phdr;
 	Elf_Auxargs *elf_auxargs;
 	struct vmspace *vmspace;
+#ifndef PAX_ASLR
+	vm_map_t map;
+#endif
 	char *interp;
 	Elf_Brandinfo *brand_info;
 	struct sysentvec *sv;
 	u_long addr, baddr, et_dyn_addr, entry, proghdr;
+#ifndef PAX_ASLR
+	u_long maxalign, mapsz, maxv, maxv1;
+#endif
 	uint32_t fctl0;
 	int32_t osrel;
 	bool free_interp;
 	int error, i, n;
+#ifndef PAX_ASLR
+	maxalign = PAGE_SIZE;
+	mapsz = 0;
+#endif
 
 	hdr = (const Elf_Ehdr *)imgp->image_header;
 
@@ -1078,12 +1114,21 @@ __CONCAT(exec_, __elfN(imgact))(struct image_params *imgp)
 	interp = NULL;
 	free_interp = false;
 	td = curthread;
+#ifndef PAX_ASLR
+	maxalign = PAGE_SIZE;
+	mapsz = 0;
+#endif
 
 	for (i = 0; i < hdr->e_phnum; i++) {
 		switch (phdr[i].p_type) {
 		case PT_LOAD:
 			if (n == 0)
 				baddr = phdr[i].p_vaddr;
+#ifndef PAX_ASLR
+			if (phdr[i].p_align > maxalign)
+				maxalign = phdr[i].p_align;
+			mapsz += phdr[i].p_memsz;
+#endif
 			n++;
 
 			/*
@@ -1128,6 +1173,7 @@ __CONCAT(exec_, __elfN(imgact))(struct image_params *imgp)
 		error = ENOEXEC;
 		goto ret;
 	}
+	sv = brand_info->sysvec;
 	et_dyn_addr = 0;
 	if (hdr->e_type == ET_DYN) {
 		if ((brand_info->flags & BI_CAN_EXEC_DYN) == 0) {
@@ -1139,8 +1185,22 @@ __CONCAT(exec_, __elfN(imgact))(struct image_params *imgp)
 		 * Honour the base load address from the dso if it is
 		 * non-zero for some reason.
 		 */
+#ifdef PAX_ASLR
 		if (baddr == 0)
 			et_dyn_addr = ET_DYN_LOAD_ADDR;
+#else
+		if (baddr == 0) {
+			if ((sv->sv_flags & SV_ASLR) == 0 ||
+			    (fctl0 & NT_FREEBSD_FCTL_ASLR_DISABLE) != 0)
+				et_dyn_addr = __elfN(pie_base);
+			else if ((__elfN(pie_aslr_enabled) &&
+			    (imgp->proc->p_flag2 & P2_ASLR_DISABLE) == 0) ||
+			    (imgp->proc->p_flag2 & P2_ASLR_ENABLE) != 0)
+				et_dyn_addr = ET_DYN_ADDR_RAND;
+			else
+				et_dyn_addr = __elfN(pie_base);
+		}
+#endif /* PAX_ASLR */
 	}
 
 	/*
@@ -1156,10 +1216,59 @@ __CONCAT(exec_, __elfN(imgact))(struct image_params *imgp)
 	 */
 	VOP_UNLOCK(imgp->vp, 0);
 
-	sv = brand_info->sysvec;
+#ifndef PAX_ASLR
+	/*
+	 * Decide whether to enable randomization of user mappings.
+	 * First, reset user preferences for the setid binaries.
+	 * Then, account for the support of the randomization by the
+	 * ABI, by user preferences, and make special treatment for
+	 * PIE binaries.
+	 */
+	if (imgp->credential_setid) {
+		PROC_LOCK(imgp->proc);
+		imgp->proc->p_flag2 &= ~(P2_ASLR_ENABLE | P2_ASLR_DISABLE);
+		PROC_UNLOCK(imgp->proc);
+	}
+	if ((sv->sv_flags & SV_ASLR) == 0 ||
+	    (imgp->proc->p_flag2 & P2_ASLR_DISABLE) != 0 ||
+	    (fctl0 & NT_FREEBSD_FCTL_ASLR_DISABLE) != 0) {
+		KASSERT(et_dyn_addr != ET_DYN_ADDR_RAND,
+		    ("et_dyn_addr == RAND and !ASLR"));
+	} else if ((imgp->proc->p_flag2 & P2_ASLR_ENABLE) != 0 ||
+	    (__elfN(aslr_enabled) && hdr->e_type == ET_EXEC) ||
+	    et_dyn_addr == ET_DYN_ADDR_RAND) {
+		imgp->map_flags |= MAP_ASLR;
+		/*
+		 * If user does not care about sbrk, utilize the bss
+		 * grow region for mappings as well.  We can select
+		 * the base for the image anywere and still not suffer
+		 * from the fragmentation.
+		 */
+		if (!__elfN(aslr_honor_sbrk) ||
+		    (imgp->proc->p_flag2 & P2_ASLR_IGNSTART) != 0)
+			imgp->map_flags |= MAP_ASLR_IGNSTART;
+	}
+#endif /* PAX_ASLR */
+
 	error = exec_new_vmspace(imgp, sv);
+	vmspace = imgp->proc->p_vmspace;
+#ifndef PAX_ASLR
+	map = &vmspace->vm_map;
+#endif
+
 	imgp->proc->p_sysent = sv;
 
+#ifndef PAX_ASLR
+	maxv = vm_map_max(map) - lim_max(td, RLIMIT_STACK);
+	if (et_dyn_addr == ET_DYN_ADDR_RAND) {
+		KASSERT((map->flags & MAP_ASLR) != 0,
+		    ("ET_DYN_ADDR_RAND but !MAP_ASLR"));
+		et_dyn_addr = __CONCAT(rnd_, __elfN(base))(map,
+		    vm_map_min(map) + mapsz + lim_max(td, RLIMIT_DATA),
+		    /* reserve half of the address space to interpreter */
+		    maxv / 2, 1UL << flsl(maxalign));
+	}
+#else /* PAX_ASLR */
 	et_dyn_addr = 0;
 	if (hdr->e_type == ET_DYN) {
 		if ((brand_info->flags & BI_CAN_EXEC_DYN) == 0) {
@@ -1173,11 +1282,10 @@ __CONCAT(exec_, __elfN(imgact))(struct image_params *imgp)
 		 */
 		if (baddr == 0) {
 			et_dyn_addr = ET_DYN_LOAD_ADDR;
-#ifdef PAX_ASLR
 			pax_aslr_execbase(imgp->proc, &et_dyn_addr);
-#endif
 		}
 	}
+#endif
 
 	vn_lock(imgp->vp, LK_SHARED | LK_RETRY);
 	if (error != 0)
@@ -1199,18 +1307,38 @@ __CONCAT(exec_, __elfN(imgact))(struct image_params *imgp)
 	 * calculation is that it leaves room for the heap to grow to
 	 * its maximum allowed size.
 	 */
-	PROC_LOCK(imgp->proc);
-	vmspace = imgp->proc->p_vmspace;
 	addr = round_page((vm_offset_t)vmspace->vm_daddr + lim_max(td,
 	    RLIMIT_DATA));
+#ifndef PAX_ASLR
+	if ((map->flags & MAP_ASLR) != 0) {
+		maxv1 = maxv / 2 + addr / 2;
+		MPASS(maxv1 >= addr);	/* No overflow */
+		map->anon_loc = __CONCAT(rnd_, __elfN(base))(map, addr, maxv1,
+		    MAXPAGESIZES > 1 ? pagesizes[1] : pagesizes[0]);
+	} else {
+		map->anon_loc = addr;
+	}
+#endif /* PAX_ASLR */
+
 #ifdef PAX_ASLR
+	// XXXOP: Is the locking here really needed?!
+	PROC_LOCK(imgp->proc);
 	pax_aslr_rtld(imgp->proc, &addr);
-#endif
 	PROC_UNLOCK(imgp->proc);
+#endif
 	imgp->entry_addr = entry;
 
 	if (interp != NULL) {
 		VOP_UNLOCK(imgp->vp, 0);
+#ifndef PAX_ASLR
+		if ((map->flags & MAP_ASLR) != 0) {
+			/* Assume that interpeter fits into 1/4 of AS */
+			maxv1 = maxv / 2 + addr / 2;
+			MPASS(maxv1 >= addr);	/* No overflow */
+			addr = __CONCAT(rnd_, __elfN(base))(map, addr,
+			    maxv1, PAGE_SIZE);
+		}
+#endif /* PAX_ASLR */
 		error = __elfN(load_interp)(imgp, brand_info, interp, &addr,
 		    &imgp->entry_addr);
 		vn_lock(imgp->vp, LK_SHARED | LK_RETRY);
@@ -1277,6 +1405,7 @@ __elfN(freebsd_fixup)(register_t **stack_base, struct image_params *imgp)
 	AUXARGS_ENTRY(pos, AT_FLAGS, args->flags);
 	AUXARGS_ENTRY(pos, AT_ENTRY, args->entry);
 	AUXARGS_ENTRY(pos, AT_BASE, args->base);
+	AUXARGS_ENTRY(pos, AT_PAXFLAGS, args->pax_flags);
 	AUXARGS_ENTRY(pos, AT_EHDRFLAGS, args->hdr_eflags);
 	if (imgp->execpathp != 0)
 		AUXARGS_ENTRY(pos, AT_EXECPATH, imgp->execpathp);

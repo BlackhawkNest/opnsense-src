@@ -130,25 +130,6 @@ nvme_attach(device_t dev)
 	int			status;
 
 	status = nvme_ctrlr_construct(ctrlr, dev);
-
-	if (status != 0) {
-		nvme_ctrlr_destruct(ctrlr, dev);
-		return (status);
-	}
-
-	/*
-	 * Reset controller twice to ensure we do a transition from cc.en==1 to
-	 * cc.en==0.  This is because we don't really know what status the
-	 * controller was left in when boot handed off to OS.  Linux doesn't do
-	 * this, however. If we adopt that policy, see also nvme_ctrlr_resume().
-	 */
-	status = nvme_ctrlr_hw_reset(ctrlr);
-	if (status != 0) {
-		nvme_ctrlr_destruct(ctrlr, dev);
-		return (status);
-	}
-
-	status = nvme_ctrlr_hw_reset(ctrlr);
 	if (status != 0) {
 		nvme_ctrlr_destruct(ctrlr, dev);
 		return (status);
@@ -157,7 +138,8 @@ nvme_attach(device_t dev)
 	ctrlr->config_hook.ich_func = nvme_ctrlr_start_config_hook;
 	ctrlr->config_hook.ich_arg = ctrlr;
 
-	config_intrhook_establish(&ctrlr->config_hook);
+	if (config_intrhook_establish(&ctrlr->config_hook) != 0)
+		return (ENOMEM);
 
 	return (0);
 }

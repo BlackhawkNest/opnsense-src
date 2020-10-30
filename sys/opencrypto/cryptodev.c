@@ -392,8 +392,6 @@ cryptof_ioctl(
 	struct crypt_op copc;
 	struct crypt_kop kopc;
 #endif
-	static struct timeval arc4warn, blfwarn, castwarn, deswarn, md5warn;
-	static struct timeval skipwarn, tdeswarn;
 
 	switch (cmd) {
 	case CIOCGSESSION:
@@ -414,28 +412,18 @@ cryptof_ioctl(
 		case 0:
 			break;
 		case CRYPTO_DES_CBC:
-			if (ratecheck(&deswarn, &warninterval))
-				gone_in(13, "DES cipher via /dev/crypto");
 			txform = &enc_xform_des;
 			break;
 		case CRYPTO_3DES_CBC:
-			if (ratecheck(&tdeswarn, &warninterval))
-				gone_in(13, "3DES cipher via /dev/crypto");
 			txform = &enc_xform_3des;
 			break;
 		case CRYPTO_BLF_CBC:
-			if (ratecheck(&blfwarn, &warninterval))
-				gone_in(13, "Blowfish cipher via /dev/crypto");
 			txform = &enc_xform_blf;
 			break;
 		case CRYPTO_CAST_CBC:
-			if (ratecheck(&castwarn, &warninterval))
-				gone_in(13, "CAST128 cipher via /dev/crypto");
 			txform = &enc_xform_cast5;
 			break;
 		case CRYPTO_SKIPJACK_CBC:
-			if (ratecheck(&skipwarn, &warninterval))
-				gone_in(13, "Skipjack cipher via /dev/crypto");
 			txform = &enc_xform_skipjack;
 			break;
 		case CRYPTO_AES_CBC:
@@ -448,8 +436,6 @@ cryptof_ioctl(
 			txform = &enc_xform_null;
 			break;
 		case CRYPTO_ARC4:
-			if (ratecheck(&arc4warn, &warninterval))
-				gone_in(13, "ARC4 cipher via /dev/crypto");
 			txform = &enc_xform_arc4;
 			break;
  		case CRYPTO_CAMELLIA_CBC:
@@ -478,9 +464,6 @@ cryptof_ioctl(
 		case 0:
 			break;
 		case CRYPTO_MD5_HMAC:
-			if (ratecheck(&md5warn, &warninterval))
-				gone_in(13,
-				    "MD5-HMAC authenticator via /dev/crypto");
 			thash = &auth_hash_hmac_md5;
 			break;
 		case CRYPTO_POLY1305:
@@ -815,6 +798,47 @@ cod_free(struct cryptop_data *cod)
 	free(cod, M_XDATA);
 }
 
+static void
+cryptodev_warn(struct csession *cse)
+{
+	static struct timeval arc4warn, blfwarn, castwarn, deswarn, md5warn;
+	static struct timeval skipwarn, tdeswarn;
+
+	switch (cse->cipher) {
+	case CRYPTO_DES_CBC:
+		if (ratecheck(&deswarn, &warninterval))
+			gone_in(13, "DES cipher via /dev/crypto");
+		break;
+	case CRYPTO_3DES_CBC:
+		if (ratecheck(&tdeswarn, &warninterval))
+			gone_in(13, "3DES cipher via /dev/crypto");
+		break;
+	case CRYPTO_BLF_CBC:
+		if (ratecheck(&blfwarn, &warninterval))
+			gone_in(13, "Blowfish cipher via /dev/crypto");
+		break;
+	case CRYPTO_CAST_CBC:
+		if (ratecheck(&castwarn, &warninterval))
+			gone_in(13, "CAST128 cipher via /dev/crypto");
+		break;
+	case CRYPTO_SKIPJACK_CBC:
+		if (ratecheck(&skipwarn, &warninterval))
+			gone_in(13, "Skipjack cipher via /dev/crypto");
+		break;
+	case CRYPTO_ARC4:
+		if (ratecheck(&arc4warn, &warninterval))
+			gone_in(13, "ARC4 cipher via /dev/crypto");
+		break;
+	}
+
+	switch (cse->mac) {
+	case CRYPTO_MD5_HMAC:
+		if (ratecheck(&md5warn, &warninterval))
+			gone_in(13, "MD5-HMAC authenticator via /dev/crypto");
+		break;
+	}
+}
+
 static int
 cryptodev_op(
 	struct csession *cse,
@@ -937,6 +961,7 @@ cryptodev_op(
 		error = EINVAL;
 		goto bail;
 	}
+	cryptodev_warn(cse);
 
 again:
 	/*
@@ -1106,6 +1131,7 @@ cryptodev_aead(
 		SDT_PROBE1(opencrypto, dev, ioctl, error, __LINE__);
 		goto bail;
 	}
+	cryptodev_warn(cse);
 again:
 	/*
 	 * Let the dispatch run unlocked, then, interlock against the
@@ -1230,11 +1256,7 @@ cryptodev_key(struct crypt_kop *kop)
 		return (EINVAL);
 	}
 
-	krp = (struct cryptkop *)malloc(sizeof *krp, M_XDATA, M_WAITOK|M_ZERO);
-	if (!krp) {
-		SDT_PROBE1(opencrypto, dev, ioctl, error, __LINE__);
-		return (ENOMEM);
-	}
+	krp = malloc(sizeof(*krp), M_XDATA, M_WAITOK | M_ZERO);
 	krp->krp_op = kop->crk_op;
 	krp->krp_status = kop->crk_status;
 	krp->krp_iparams = kop->crk_iparams;
@@ -1472,20 +1494,21 @@ cryptoioctl(struct cdev *dev, u_long cmd, caddr_t data, int flag, struct thread 
 
 	switch (cmd) {
 	case CRIOGET:
+		error = falloc_noinstall(td, &f);
+		if (error)
+			break;
+
 		fcr = malloc(sizeof(struct fcrypt), M_XDATA, M_WAITOK | M_ZERO);
 		TAILQ_INIT(&fcr->csessions);
 		mtx_init(&fcr->lock, "fcrypt", NULL, MTX_DEF);
 
-		error = falloc(td, &f, &fd, 0);
-
+		finit(f, FREAD | FWRITE, DTYPE_CRYPTO, fcr, &cryptofops);
+		error = finstall(td, f, &fd, 0, NULL);
 		if (error) {
 			mtx_destroy(&fcr->lock);
 			free(fcr, M_XDATA);
-			return (error);
-		}
-		/* falloc automatically provides an extra reference to 'f'. */
-		finit(f, FREAD | FWRITE, DTYPE_CRYPTO, fcr, &cryptofops);
-		*(u_int32_t *)data = fd;
+		} else
+			*(uint32_t *)data = fd;
 		fdrop(f, td);
 		break;
 	case CRIOFINDDEV:

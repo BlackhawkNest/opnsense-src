@@ -1016,10 +1016,11 @@ abortit:
 		 */
 		ext2_dec_nlink(xp);
 		if (doingdirectory) {
-			if (--xp->i_nlink != 0)
+			if (xp->i_nlink > 2)
 				panic("ext2_rename: linked directory");
 			error = ext2_truncate(tvp, (off_t)0, IO_SYNC,
 			    tcnp->cn_cred, tcnp->cn_thread);
+			xp->i_nlink = 0;
 		}
 		xp->i_flag |= IN_CHANGE;
 		vput(tvp);
@@ -1074,10 +1075,6 @@ abortit:
 			ext2_dec_nlink(dp);
 			dp->i_flag |= IN_CHANGE;
 			dirbuf = malloc(dp->i_e2fs->e2fs_bsize, M_TEMP, M_WAITOK | M_ZERO);
-			if (!dirbuf) {
-				error = ENOMEM;
-				goto bad;
-			}
 			error = vn_rdwr(UIO_READ, fvp, (caddr_t)dirbuf,
 			    ip->i_e2fs->e2fs_bsize, (off_t)0,
 			    UIO_SYSSPACE, IO_NODELOCKED | IO_NOMACCHECK,
@@ -1387,12 +1384,6 @@ ext2_mkdir(struct vop_mkdir_args *ap)
 #define DIRBLKSIZ  VTOI(dvp)->i_e2fs->e2fs_bsize
 	dirtemplate.dotdot_reclen = DIRBLKSIZ - 12;
 	buf = malloc(DIRBLKSIZ, M_TEMP, M_WAITOK | M_ZERO);
-	if (!buf) {
-		error = ENOMEM;
-		ext2_dec_nlink(dp);
-		dp->i_flag |= IN_CHANGE;
-		goto bad;
-	}
 	if (EXT2_HAS_RO_COMPAT_FEATURE(fs, EXT2F_ROCOMPAT_METADATA_CKSUM)) {
 		dirtemplate.dotdot_reclen -= sizeof(struct ext2fs_direct_tail);
 		ext2_init_dirent_tail(EXT2_DIRENT_TAIL(buf, DIRBLKSIZ));
@@ -2155,11 +2146,24 @@ ext2_read(struct vop_read_args *ap)
 static int
 ext2_ioctl(struct vop_ioctl_args *ap)
 {
+	struct vnode *vp;
+	int error;
 
+	vp = ap->a_vp;
 	switch (ap->a_command) {
 	case FIOSEEKDATA:
+		if (!(VTOI(vp)->i_flag & IN_E4EXTENTS)) {
+			error = vn_lock(vp, LK_SHARED);
+			if (error == 0) {
+				error = ext2_bmap_seekdata(vp,
+				    (off_t *)ap->a_data);
+				VOP_UNLOCK(vp, 0);
+			} else
+				error = EBADF;
+			return (error);
+		}
 	case FIOSEEKHOLE:
-		return (vn_bmap_seekhole(ap->a_vp, ap->a_command,
+		return (vn_bmap_seekhole(vp, ap->a_command,
 		    (off_t *)ap->a_data, ap->a_cred));
 	default:
 		return (ENOTTY);

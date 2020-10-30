@@ -68,6 +68,7 @@ __FBSDID("$FreeBSD$");
 #include "opt_inet.h"
 #include "opt_inet6.h"
 #include "opt_mpath.h"
+#include "opt_pax.h"
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -130,7 +131,11 @@ static struct sx addrsel_sxlock;
 VNET_DEFINE_STATIC(struct in6_addrpolicy, defaultaddrpolicy);
 #define	V_defaultaddrpolicy		VNET(defaultaddrpolicy)
 
+#ifdef PAX_HARDENING
+VNET_DEFINE(int, ip6_prefer_tempaddr) = 1;
+#else
 VNET_DEFINE(int, ip6_prefer_tempaddr) = 0;
+#endif
 
 static int selectroute(struct sockaddr_in6 *, struct ip6_pktopts *,
 	struct ip6_moptions *, struct route_in6 *, struct ifnet **,
@@ -931,21 +936,21 @@ in6_selectroute_fib(struct sockaddr_in6 *dstsock, struct ip6_pktopts *opts,
  * 3. The system default hoplimit.
  */
 int
-in6_selecthlim(struct inpcb *in6p, struct ifnet *ifp)
+in6_selecthlim(struct inpcb *inp, struct ifnet *ifp)
 {
 
-	if (in6p && in6p->in6p_hops >= 0)
-		return (in6p->in6p_hops);
+	if (inp && inp->in6p_hops >= 0)
+		return (inp->in6p_hops);
 	else if (ifp)
 		return (ND_IFINFO(ifp)->chlim);
-	else if (in6p && !IN6_IS_ADDR_UNSPECIFIED(&in6p->in6p_faddr)) {
+	else if (inp && !IN6_IS_ADDR_UNSPECIFIED(&inp->in6p_faddr)) {
 		struct nhop6_basic nh6;
 		struct in6_addr dst;
 		uint32_t fibnum, scopeid;
 		int hlim;
 
-		fibnum = in6p->inp_inc.inc_fibnum;
-		in6_splitscope(&in6p->in6p_faddr, &dst, &scopeid);
+		fibnum = inp->inp_inc.inc_fibnum;
+		in6_splitscope(&inp->in6p_faddr, &dst, &scopeid);
 		if (fib6_lookup_nh_basic(fibnum, &dst, scopeid, 0, 0, &nh6)==0){
 			hlim = ND_IFINFO(nh6.nh_ifp)->chlim;
 			return (hlim);
